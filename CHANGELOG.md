@@ -19,3 +19,16 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
     account (`versions.tf`, `providers.tf`, `variables.tf`, `main.tf`, `.terraform.lock.hcl`).
   - `config/project.json` — shared naming configuration consumed by Bicep and Terraform.
   - `docs/implementation-plan.md`, `docs/security-model.md` — design and security model.
+
+### Changed
+
+- Scoped the repository to **platform authority only** (the landing-zone foundation): removed
+  workload/AKS deployment content from `docs/implementation-plan.md` and `docs/security-model.md`.
+  The AKS cluster deploys from the workload repository, using the identities and state this platform vends.
+- Reframed the plan to the CAF landing-zone model (platform archetypes; `alz` platform prefix,
+  `taks` reserved for the workload) and confirmed the CI/CD-first operating model.
+- Restructured the platform Terraform into a modular vending design: `management/` (shared state
+  storage), `modules/workload-identity/` (guardrailed vending module), and `vending/` (per-workload
+  consumer); removed the monolithic `bootstrap/` root.
+- Added `README.md` describing the repository, its layout, and operating model.
+- Added `docs/onboarding.md` (operating + workload onboarding guide), linked from the README.

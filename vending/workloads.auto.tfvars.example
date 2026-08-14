@@ -1,0 +1,28 @@
+# Per-workload declarations — the manual stand-in for a self-service intake form.
+# Copy to workloads.auto.tfvars (gitignored), fill in real values, and Terraform loads
+# it automatically. The module's guardrails reject anything outside policy.
+
+workloads = {
+  taks = {
+    subject_prefix      = "repo:OWNER@OWNER_ID/terraform-aks-sandbox@REPO_ID"
+    resource_group_name = "rg-taks-sandbox-swc"
+
+    identities = {
+      plan = {
+        resource_group_role = "Reader"
+        state_role          = "Storage Blob Data Reader"
+        environments        = ["aks-plan"]
+      }
+      deploy = {
+        resource_group_role = "Contributor"
+        state_role          = "Storage Blob Data Contributor"
+        environments        = ["aks-apply", "aks-destroy"]
+      }
+      cleanup = {
+        resource_group_role = "Contributor"
+        state_role          = "Storage Blob Data Contributor"
+        environments        = ["ttl-cleanup"]
+      }
+    }
+  }
+}

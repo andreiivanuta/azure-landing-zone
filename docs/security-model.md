@@ -2,7 +2,7 @@
 
 ## Trust boundaries
 
-The project separates persistent control-plane resources from disposable AKS resources.
+The project separates persistent platform (control-plane) resources from the disposable workload resources they support.
 
 ### Persistent bootstrap boundary
 
@@ -19,17 +19,13 @@ The bootstrap Terraform root will then own:
 - Narrow Azure role assignments required by automation.
 - Optional persistent audit and monitoring resources.
 
-This split breaks the initial authentication and state-backend dependency cycle without local Terraform state. Routine AKS workflows must not be able to delete or modify this boundary. Bootstrap changes require a separate, explicitly approved process operated by a trusted human identity.
+This split breaks the initial authentication and state-backend dependency cycle without local Terraform state. Routine workload workflows must not be able to delete or modify this boundary. Bootstrap changes require a separate, explicitly approved process operated by a trusted human identity.
 
-### Disposable AKS boundary
+### Workload boundary
 
-The AKS Terraform root will own:
+The workload's AKS Terraform root lives in the workload repository and owns the ephemeral cluster and its supporting resources.
 
-- The ephemeral AKS cluster.
-- Disposable networking and supporting resources.
-- Resource tags that record ownership and expiration.
-
-Apply, destroy, and TTL cleanup identities will be scoped only to the designated disposable resource group and the minimum remote-state data access they require.
+The platform grants the apply, destroy, and TTL-cleanup identities access scoped only to the designated workload resource group and the minimum remote-state data access they require. It never grants them access to this platform boundary.
 
 ## GitHub trust model
 
@@ -49,7 +45,7 @@ The persistent Azure Storage account must use:
 - Public blob access disabled.
 - Shared-key authorization disabled when supported by the selected backend flow.
 - Blob versioning and blob/container soft delete.
-- Separate state keys for bootstrap and AKS roots.
+- Separate state keys for the bootstrap and workload roots.
 - Restricted administrative access and auditable role assignments.
 
 State and plan files are sensitive operational data. They must never be committed, printed to public logs, or uploaded as public workflow artifacts.

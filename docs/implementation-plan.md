@@ -2,9 +2,25 @@
 
 ## Purpose
 
-This document is the authoritative resume point for building the project. Update the progress checklist and decision log whenever a phase completes or the design changes.
+This document is the authoritative resume point for the platform (landing zone) repository. Update the progress checklist and decision log whenever a phase completes or the design changes.
 
-The goal is to deploy and destroy an ephemeral AKS learning cluster through GitHub Actions using Terraform, GitHub OIDC, four least-privilege Azure identities, and no client secrets. The initial trust anchor must require as little manual work as Azure and GitHub security allow.
+This repository prepares the **authority and shared foundation** that lets workload repositories deploy to Azure through GitHub Actions using OIDC, least-privilege identities, and no client secrets. It does **not** deploy workloads. The first AKS workload deploys itself from a separate repository (`terraform-aks-sandbox`) using the identities and state backend this platform vends.
+
+## Scope
+
+In scope (this repository):
+
+- Trust anchor (Bicep): resource groups, the bootstrap identity, its OIDC federated credential, and scoped role assignments.
+- Bootstrap Terraform: the state backend, workload CI identities, their federated credentials, and narrow RBAC.
+- The bootstrap CI workflow that runs the platform Terraform.
+- Publishing the platform contract and seeding the workload repository's environments.
+- Later: shared connectivity, identity/security, and policy guardrails.
+
+Out of scope (owned by workload repositories):
+
+- AKS Terraform and any workload infrastructure.
+- Workload deploy, destroy, and scheduled TTL-cleanup workflows.
+- Workload runtime specifics such as node SKU, networking plugin, and TTL policy.
 
 ## Current checkpoint
 
@@ -19,13 +35,11 @@ Last reviewed: 2026-08-14
 - [x] Terraform basics exercise created and validated without Azure resources.
 - [x] Personal Azure context selected: `Visual Studio Enterprise Subscription`.
 - [x] Deployment region selected: `swedencentral`.
-- [x] AKS node SKU selected: `Standard_D2as_v5` with one node.
-- [x] Sweden Central quota verified: 20 total regional vCPUs and 20 DASv5-family vCPUs available.
 - [x] Trust-anchor Bicep deployed to the personal subscription; provisioning state Succeeded.
 - [x] Azure project resources created: `rg-taks-bootstrap-swc`, `rg-taks-sandbox-swc`, bootstrap managed identity `id-taks-bootstrap-swc`, its GitHub OIDC federated credential, and four resource-group-scoped role assignments.
 - [x] `bootstrap` GitHub environment configured with the three OIDC identifiers: `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` as environment variables, `AZURE_SUBSCRIPTION_ID` as an environment secret. Default Actions token verified read-only.
 
-> **Architecture change (2026-08-14):** the project is being split into two repositories — private `azure-landing-zone` (platform) and public `terraform-aks-sandbox` (workload). Trust-anchor and foundation code moves to the platform repo; this repo becomes the AKS workload. See "Two-repository architecture" below.
+> **Architecture (2026-08-14):** the project is split into two repositories — private `azure-landing-zone` (this platform repo) and public `terraform-aks-sandbox` (workload). The trust anchor and foundation live here; the AKS workload deploys itself from the workload repo. Naming follows the CAF landing-zone model with the `alz` platform prefix; `taks` is reserved for the AKS workload. The trust anchor's re-point to this repo and the `taks`->`alz` rename are pending (Phase R).
 
 ## Fixed decisions
 
@@ -37,9 +51,9 @@ Last reviewed: 2026-08-14
 | CI/CD system | GitHub Actions on GitHub-hosted runners |
 | Azure authentication | GitHub OIDC workload identity federation; no client secrets or certificates |
 | Region | Sweden Central (`swedencentral`) |
-| AKS worker | One `Standard_D2as_v5` node |
-| AKS control plane | Free tier |
-| Default TTL | Four hours |
+| Platform naming | CAF landing-zone model; platform prefix `alz`, workload prefix `taks`, region code `swc` |
+| Platform archetypes | Management (now); Connectivity and Identity/Security (later) |
+| Operating model | CI/CD-first; only the trust anchor runs locally, by the trusted user |
 | Terraform state | Private Azure Blob Storage with Entra ID authorization |
 | State lifecycle | Lives with the current Azure subscription; a future subscription receives a new backend and fresh deployment |
 | Identity model | Four identities: bootstrap, plan, deployment, and cleanup |
@@ -68,12 +82,11 @@ The platform runs once to establish authority, then provisions everything the wo
 - Resource group names and region.
 - Later: App Configuration endpoint and Key Vault URI for runtime values.
 
-### Phase re-homing after the split
+### Division of responsibility
 
-- Phases 4 and 5 (foundation Terraform and its workflow) run in `azure-landing-zone`.
-- Phases 6, 7, and 9 (AKS Terraform, CI/CD, first deploy and destroy) run in `terraform-aks-sandbox`.
-- Phase 8 (branch protection) applies to both repositories.
-- Phase 10 (subscription exit) is driven from the platform.
+- The platform repository (this repo) owns the trust anchor, state backend, CI identities, RBAC, and later the shared services and policy guardrails.
+- The workload repository owns its own Terraform root, its deploy/destroy/cleanup workflows, and its runtime configuration. Those are not tracked in this plan.
+- Branch protection applies to each repository independently.
 
 ## Architecture
 
@@ -140,16 +153,7 @@ The `bootstrap/` Terraform root will own persistent resources inside the bootstr
 
 The bootstrap managed identity itself and the two project resource groups remain owned by the trust-anchor Bicep deployment to avoid a circular dependency.
 
-### Disposable Terraform root
-
-The `infrastructure/` Terraform root will own only short-lived resources in the disposable resource group:
-
-- AKS cluster.
-- Disposable networking and supporting resources.
-- Managed identities needed by AKS itself.
-- Ownership and expiration tags.
-
-Destroying this root must not delete the state backend, GitHub CI identities, or trust-anchor resources.
+The workload's own Terraform root (in the workload repository) owns the AKS cluster and its short-lived resources. Destroying it must never delete the state backend, CI identities, or trust-anchor resources owned here.
 
 ## Identity and access model
 
@@ -268,54 +272,48 @@ Platform — `azure-landing-zone` (private):
 ```text
 .github/
   workflows/
-    bootstrap.yml
-bootstrap-trust/
+    management.yml           # applies management/ (shared state storage)
+    vending.yml              # applies vending/ (workload identities)
+bootstrap-trust/             # Bicep trust anchor (run once, locally)
   main.bicep
   modules/
     bootstrap-identity.bicep
     role-assignments.bicep
   README.md
-bootstrap/
+management/                  # Terraform: shared state storage (workload-agnostic)
   backend.tf
   main.tf
   outputs.tf
   providers.tf
   variables.tf
   versions.tf
+modules/
+  workload-identity/         # Terraform module: vends one workload's identities (guardrailed)
+    main.tf
+    outputs.tf
+    variables.tf
+    versions.tf
+vending/                     # Terraform: consumes the module per declared workload
+  backend.tf
+  main.tf
+  outputs.tf
+  providers.tf
+  variables.tf
+  versions.tf
+  workloads.auto.tfvars.example
 config/
   project.json
 docs/
   implementation-plan.md
   security-model.md
+CHANGELOG.md
+README.md
+SECURITY.md
 ```
 
-Workload — `terraform-aks-sandbox` (public):
+The workload repository (`terraform-aks-sandbox`) owns its own `infrastructure/` Terraform root and CD workflows; its layout is tracked in that repository, not here.
 
-```text
-.github/
-  dependabot.yml
-  workflows/
-    ci.yml
-    plan.yml
-    apply.yml
-    destroy.yml
-    ttl-cleanup.yml
-infrastructure/
-  backend.tf
-  main.tf
-  outputs.tf
-  providers.tf
-  variables.tf
-  versions.tf
-config/
-  project.json
-docs/
-  operations.md
-learning/
-  terraform-basics/
-```
-
-Neither repository introduces modules until repeated infrastructure creates real complexity.
+The one module, `modules/workload-identity/`, exists because vending is reused for every workload; no other modules are introduced until repeated infrastructure creates real complexity.
 
 ## Implementation phases
 
@@ -395,6 +393,18 @@ Exit criteria:
 - The workload repo contains no trust anchor and no `bootstrap` environment.
 - The federated credential's subject references the platform repo exactly.
 
+### Phase R: Re-point the trust anchor and adopt `alz` naming
+
+- [ ] Update the Bicep trust anchor to the immutable OIDC subject for this repository's `bootstrap` environment.
+- [ ] Rename the management resource group and identity to the `alz` platform prefix; keep the workload resource group under `taks`.
+- [ ] Compile Bicep offline, run `az deployment sub what-if`, review, and redeploy only after approval.
+- [ ] Reset the three OIDC identifiers on this repository's `bootstrap` environment.
+- [ ] Delete the superseded `taks`-named bootstrap resource group and identity.
+
+Exit criteria:
+
+- The federated credential's subject references this repository's `bootstrap` environment exactly, and platform resources use the `alz` prefix.
+
 ### Phase 4: Implement bootstrap Terraform
 
 - [ ] Write `bootstrap/` Terraform for state Storage, three routine identities, federated credentials, and narrow RBAC.
@@ -427,84 +437,47 @@ Exit criteria:
 - Four total identities exist: bootstrap, plan, deployment, cleanup.
 - No plaintext cloud credential exists in GitHub.
 
-### Phase 6: Implement disposable AKS Terraform
+### Phase 6: Seed the workload repository (contract handover)
 
-- [ ] Write `infrastructure/` Terraform using remote state.
-- [ ] Use one `Standard_D2as_v5` node in Sweden Central.
-- [ ] Use AKS Free tier.
-- [ ] Enable OIDC issuer and AKS workload identity.
-- [ ] Use Azure CNI Overlay with Cilium unless a validated constraint requires another Day-0 choice.
-- [ ] Avoid public Kubernetes dashboard and local static accounts where supported.
-- [ ] Add ownership and UTC expiration tags with a four-hour default TTL.
-- [ ] Keep observability proportionate to a short-lived sandbox to avoid unnecessary cost.
-- [ ] Run format, validation, lint, and security scans.
-- [ ] Produce a cost estimate before apply.
+- [ ] Publish the platform contract as Terraform outputs: state backend names, workload identity client IDs, resource-group names, and region.
+- [ ] Create the workload repository's `aks-plan`, `aks-apply`, `aks-destroy`, and `ttl-cleanup` environments.
+- [ ] Seed each environment's variables from the outputs; store no secret beyond the subscription identifier.
+- [ ] Document the interface so the workload team consumes it without tribal knowledge.
 
 Exit criteria:
 
-- A reviewed Terraform plan proposes only the expected disposable resources.
+- The workload repository can authenticate to Azure and read state using only vended identities and published values.
 
-### Phase 7: Implement CI and protected CD workflows
+### Phase 7: Protect the default branch
 
-- [ ] CI workflow: formatting, validation, TFLint, security scanning, secret detection, and dependency review.
-- [ ] Plan workflow: trusted invocation using the read-only plan identity.
-- [ ] Apply workflow: manual dispatch, `aks-apply` environment, deployment identity.
-- [ ] Destroy workflow: manual dispatch, `aks-destroy` environment, deployment identity.
-- [ ] TTL workflow: scheduled fresh run, `ttl-cleanup` environment, cleanup identity.
-- [ ] Add concurrency so apply, destroy, and cleanup cannot overlap.
-- [ ] Never use a sleeping workflow for TTL.
-- [ ] Never use `pull_request_target` to execute untrusted repository code.
-- [ ] Never print a full Terraform plan or `az account show` in public logs.
-
-Exit criteria:
-
-- CI has no Azure access.
-- Apply and destroy require deliberate protected execution.
-- Scheduled cleanup can remove only expired disposable resources.
-
-### Phase 8: Protect the default branch
-
-- [ ] Create the initial default branch after workflows exist.
-- [ ] Add a ruleset requiring pull requests.
-- [ ] Require successful CI checks after each check has completed once.
-- [ ] Block force pushes and deletion.
-- [ ] Require conversation resolution.
+- [ ] Create the default branch after the platform workflow exists.
+- [ ] Require pull requests and successful checks after each check has completed once.
+- [ ] Block force pushes and deletion; require conversation resolution.
 - [ ] Require linear history and use squash merge.
 - [ ] Evaluate signed-commit enforcement only after signing is configured.
 
 Exit criteria:
 
-- Privileged workflow source cannot be changed on the default branch without the configured review and checks.
+- Privileged platform source cannot change on the default branch without the configured review and checks.
 
-### Phase 9: First deployment and destruction test
+### Phase 8: Platform roadmap (later)
 
-- [ ] Run plan and review exact additions, changes, and deletions.
-- [ ] Run protected apply.
-- [ ] Verify AKS health without printing kubeconfig or credentials.
-- [ ] Record actual hourly cost signals and created resources.
-- [ ] Test manual destroy during the same session.
-- [ ] Confirm the disposable resource group is empty or contains only explicitly retained resources.
-- [ ] Confirm bootstrap resources and remote state remain intact.
-- [ ] Test one cleanup dry run and one controlled expired-resource cleanup.
+- [ ] Connectivity: `rg-alz-connectivity-swc` hub VNet and peering for workload spokes.
+- [ ] Identity/Security: `rg-alz-security-swc` shared Key Vault, Log Analytics, and managed identities.
+- [ ] Governance: Azure Policy guardrails inherited by workload resources.
+- [ ] Self-service vending: an intake form or portal collects a workload's inputs (prefix, OIDC subject, size) and triggers a pipeline that provisions its landing zone and returns the contract, replacing the manual `terraform.tfvars`.
 
-Exit criteria:
+### Phase 9: Platform teardown and subscription exit
 
-- The cluster can be reproducibly created and destroyed through GitHub Actions.
-- Persistent state and identities survive AKS destruction.
-
-### Phase 10: Subscription-exit procedure
-
-- [ ] Document the expected Azure subscription end date when known.
-- [ ] Destroy AKS before losing access.
-- [ ] Confirm no billable disposable resources remain.
+- [ ] Confirm no workload still depends on the platform's identities or state.
 - [ ] Optionally export and encrypt state for records; never commit plaintext state.
 - [ ] Remove routine federated credentials and role assignments.
 - [ ] Remove trust-anchor resources after no workflow depends on them.
-- [ ] In a replacement subscription, create a fresh trust anchor and state backend from the same GitHub source.
+- [ ] In a replacement subscription, create a fresh trust anchor and state backend from the same source.
 
 Exit criteria:
 
-- No abandoned billable resources or live GitHub-to-Azure trust remains in the expiring subscription.
+- No abandoned billable platform resources or live GitHub-to-Azure trust remains in the expiring subscription.
 
 ## Validation gates used throughout
 
@@ -551,8 +524,7 @@ When work resumes after interruption:
 
 | Date | Decision | Reason |
 |---|---|---|
-| 2026-08-13 | Use Sweden Central | Lowest practical European price among compared regions for `Standard_D2as_v5` at the time of review |
-| 2026-08-13 | Use one `Standard_D2as_v5` node | Small, non-burstable learning configuration with available quota |
+| 2026-08-13 | Use Sweden Central | Lowest practical European price among compared regions at the time of review |
 | 2026-08-13 | Use four CI identities | Teach workload identity federation and separate scheduled cleanup from human-approved deployment |
 | 2026-08-13 | Apply and destroy share deployment identity | Terraform requires create/update/delete lifecycle permissions; environments provide operation separation |
 | 2026-08-13 | Use minimal Bicep trust anchor | Eliminates local Terraform bootstrap state while preserving an auditable declarative first deployment |
@@ -562,6 +534,9 @@ When work resumes after interruption:
 | 2026-08-13 | Use Bicep resource-group modules under the subscription root | Bicep requires resource-group-scoped resources and role assignments to be deployed through modules at those scopes |
 | 2026-08-14 | Scope all three OIDC identifiers to the `bootstrap` environment; store `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` as variables and `AZURE_SUBSCRIPTION_ID` as a secret | Environment scope keeps the identifiers behind the environment gate and `dev` branch restriction on a public repo; the client ID varies per environment while the subscription secret stays out of the settings UI |
 | 2026-08-14 | Split into two repositories: private `azure-landing-zone` (platform) and public `terraform-aks-sandbox` (workload) | Separates persistent, elevated, run-once platform from disposable, narrow, CI/CD workload; matches platform-engineering practice and isolates blast radius |
+| 2026-08-14 | Reframe as a CAF landing zone; scope this repository to platform authority only | The platform vends identities, state, and guardrails; workloads deploy themselves from their own repositories |
+| 2026-08-14 | Adopt the `alz` platform prefix and CAF archetypes (management, connectivity, identity); reserve `taks` for the AKS workload | Shared platform resources must be workload-agnostic; a workload name should not brand the foundation |
+| 2026-08-14 | Confirm the CI/CD-first operating model | Everything runs in GitHub Actions; only the irreducible trust anchor runs locally, by the trusted user |
 
 ## Explicit non-goals
 
@@ -572,3 +547,4 @@ When work resumes after interruption:
 - Subscription-wide routine deployment permissions.
 - Automatic deployment from untrusted pull requests.
 - Preserving the current AKS cluster after the Azure subscription is lost.
+- Deploying AKS or any workload from this repository; workloads deploy themselves from their own repositories.

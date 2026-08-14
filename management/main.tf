@@ -1,18 +1,17 @@
 data "azurerm_client_config" "current" {}
 
-data "azurerm_resource_group" "bootstrap" {
-  name = local.bootstrap_resource_group_name
-}
-
 locals {
   # Single source of truth for shared naming inputs, read by every tool.
   config = jsondecode(file("${path.module}/../config/project.json"))
 
-  # Derived to match the Bicep trust anchor; override via var.bootstrap_resource_group_name.
-  bootstrap_resource_group_name = coalesce(var.bootstrap_resource_group_name, "rg-${local.config.projectPrefix}-bootstrap-${local.config.locationCode}")
+  platform_prefix = local.config.platformPrefix
+  location_code   = local.config.locationCode
+  location        = local.config.location
+
+  management_resource_group_name = coalesce(var.management_resource_group_name, "rg-${local.platform_prefix}-management-${local.location_code}")
 
   # Deterministic, globally-unique name: a subscription hash avoids disclosing the ID.
-  state_storage_account_name = "st${local.config.projectPrefix}state${substr(sha1(data.azurerm_client_config.current.subscription_id), 0, 8)}"
+  state_storage_account_name = "st${local.platform_prefix}state${substr(sha1(data.azurerm_client_config.current.subscription_id), 0, 8)}"
 
   common_tags = merge(var.tags, {
     lifecycle = "persistent"
@@ -20,10 +19,15 @@ locals {
   })
 }
 
+data "azurerm_resource_group" "management" {
+  name = local.management_resource_group_name
+}
+
+# The one shared state backend, consumed by every workload's Terraform (each via its own key).
 resource "azurerm_storage_account" "state" {
   name                = local.state_storage_account_name
-  resource_group_name = data.azurerm_resource_group.bootstrap.name
-  location            = data.azurerm_resource_group.bootstrap.location
+  resource_group_name = data.azurerm_resource_group.management.name
+  location            = data.azurerm_resource_group.management.location
 
   account_tier             = "Standard"
   account_replication_type = "LRS"
@@ -48,4 +52,10 @@ resource "azurerm_storage_account" "state" {
   }
 
   tags = local.common_tags
+}
+
+resource "azurerm_storage_container" "tfstate" {
+  name                  = "tfstate"
+  storage_account_id    = azurerm_storage_account.state.id
+  container_access_type = "private"
 }
