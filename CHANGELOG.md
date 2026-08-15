@@ -19,6 +19,9 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
     account (`versions.tf`, `providers.tf`, `variables.tf`, `main.tf`, `.terraform.lock.hcl`).
   - `config/project.json` — shared naming configuration consumed by Bicep and Terraform.
   - `docs/implementation-plan.md`, `docs/security-model.md` — design and security model.
+- `bootstrap-trust/modules/identity.bicep` — generic, reusable managed-identity + GitHub
+  OIDC (OpenID Connect) federated-credential module (parameterised `credentialName`), replacing
+  the single-purpose `bootstrap-identity.bicep`.
 
 ### Changed
 
@@ -32,3 +35,8 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   consumer); removed the monolithic `bootstrap/` root.
 - Added `README.md` describing the repository, its layout, and operating model.
 - Added `docs/onboarding.md` (operating + workload onboarding guide), linked from the README.
+- Reworked the Bicep trust anchor (`bootstrap-trust/main.bicep`) to a **minimal admin-only** form:
+  it now creates only the management RG (resource group) and one admin identity `id-alz-admin-swc`
+  with a GitHub OIDC (OpenID Connect) federated credential and Contributor + UAA (User Access
+  Administrator) scoped to that RG. Dropped the workload sandbox RG and workload-prefix; naming is
+  read from `config/project.json` via `loadJsonContent`. Deployed and verified via `az deployment sub create`.

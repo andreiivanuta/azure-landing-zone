@@ -1,74 +1,63 @@
 targetScope = 'subscription'
 
-@description('Azure region for the trust-anchor resource groups and bootstrap managed identity.')
-@allowed([
-  'swedencentral'
-])
-param location string = 'swedencentral'
-
-@description('Short generic project prefix used to derive non-personal Azure resource names.')
-@minLength(2)
-@maxLength(20)
-param projectPrefix string = 'taks'
-
-@description('Exact immutable GitHub Actions OIDC subject for the bootstrap environment. Provide this at deployment time; do not commit it.')
+@description('Exact immutable GitHub Actions OIDC subject for the admin environment. Provide this at deployment time; do not commit it.')
 @minLength(1)
-param bootstrapOidcSubject string
+param adminOidcSubject string
 
-@description('Optional tags merged with the required project tags.')
+@description('Optional tags merged with the platform tags.')
 param additionalTags object = {}
 
-var locationCode = 'swc'
-var bootstrapResourceGroupName = 'rg-${projectPrefix}-bootstrap-${locationCode}'
-var disposableResourceGroupName = 'rg-${projectPrefix}-sandbox-${locationCode}'
-var bootstrapIdentityName = 'id-${projectPrefix}-bootstrap-${locationCode}'
+// Naming inputs come from the shared config so Bicep and Terraform stay in sync.
+var config = loadJsonContent('../config/project.json')
+var platformPrefix = config.platformPrefix
+var locationCode = config.locationCode
+var location = config.location
+
+var managementResourceGroupName = 'rg-${platformPrefix}-management-${locationCode}'
+var adminIdentityName = 'id-${platformPrefix}-admin-${locationCode}'
+
 var contributorRoleDefinitionGuid = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
-var readerRoleDefinitionGuid = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
 var userAccessAdministratorRoleDefinitionGuid = '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9'
+
 var commonTags = union(additionalTags, {
-  project: 'terraform-aks-sandbox'
-  environment: 'sandbox'
+  project: 'azure-landing-zone'
+  layer: 'management'
   managed_by: 'bicep'
 })
 
-resource bootstrapResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
-  name: bootstrapResourceGroupName
+// The single resource group this repo's CI/CD manages. Workload resource groups are provisioned later, not here.
+resource managementResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
+  name: managementResourceGroupName
   location: location
   tags: union(commonTags, {
     lifecycle: 'persistent'
-    purpose: 'terraform-state-and-ci'
+    purpose: 'platform-management'
   })
 }
 
-resource disposableResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
-  name: disposableResourceGroupName
-  location: location
-  tags: union(commonTags, {
-    lifecycle: 'disposable'
-    purpose: 'aks-sandbox'
-  })
-}
-
-module bootstrapIdentity 'modules/bootstrap-identity.bicep' = {
-  name: 'bootstrap-identity'
-  scope: bootstrapResourceGroup
+// Admin identity: highest trust, used only by manual, protected workflows.
+module adminIdentity 'modules/identity.bicep' = {
+  name: 'admin-identity'
+  scope: managementResourceGroup
   params: {
-    identityName: bootstrapIdentityName
+    identityName: adminIdentityName
     location: location
-    oidcSubject: bootstrapOidcSubject
+    credentialName: 'github-admin'
+    oidcSubject: adminOidcSubject
     tags: union(commonTags, {
       lifecycle: 'persistent'
-      purpose: 'github-bootstrap-oidc'
+      purpose: 'github-admin-oidc'
     })
   }
 }
 
-module bootstrapRoles 'modules/role-assignments.bicep' = {
-  name: 'bootstrap-rbac'
-  scope: bootstrapResourceGroup
+// Admin may build and administer the platform foundation inside the management resource group.
+module adminRoles 'modules/role-assignments.bicep' = {
+  name: 'admin-rbac'
+  scope: managementResourceGroup
   params: {
-    assignmentDescriptionPrefix: 'GitHub bootstrap access for persistent project resources'
-    principalId: bootstrapIdentity.outputs.principalId
+    assignmentDescriptionPrefix: 'GitHub admin access to the platform management resource group'
+    principalId: adminIdentity.outputs.principalId
     roleDefinitionGuids: [
       contributorRoleDefinitionGuid
       userAccessAdministratorRoleDefinitionGuid
@@ -76,24 +65,8 @@ module bootstrapRoles 'modules/role-assignments.bicep' = {
   }
 }
 
-module disposableRoles 'modules/role-assignments.bicep' = {
-  name: 'disposable-rbac'
-  scope: disposableResourceGroup
-  params: {
-    assignmentDescriptionPrefix: 'GitHub bootstrap access for disposable project resources'
-    principalId: bootstrapIdentity.outputs.principalId
-    roleDefinitionGuids: [
-      readerRoleDefinitionGuid
-      userAccessAdministratorRoleDefinitionGuid
-    ]
-  }
-}
+@description('Client ID of the admin managed identity. Store only as a protected GitHub environment value after deployment.')
+output adminIdentityClientId string = adminIdentity.outputs.clientId
 
-@description('Client ID for the bootstrap managed identity. Store it only as a protected GitHub environment secret after deployment.')
-output bootstrapIdentityClientId string = bootstrapIdentity.outputs.clientId
-
-@description('Name of the persistent bootstrap resource group.')
-output bootstrapResourceGroupName string = bootstrapResourceGroup.name
-
-@description('Name of the disposable AKS resource group.')
-output disposableResourceGroupName string = disposableResourceGroup.name
+@description('Name of the platform management resource group.')
+output managementResourceGroupName string = managementResourceGroup.name
