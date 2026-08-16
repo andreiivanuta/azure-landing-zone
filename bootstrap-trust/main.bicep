@@ -15,6 +15,8 @@ var location = config.location
 
 var managementResourceGroupName = 'rg-${platformPrefix}-management-${locationCode}'
 var adminIdentityName = 'id-${platformPrefix}-admin-${locationCode}'
+// Deterministic, globally-unique name; the subscription hash keeps the ID out of source.
+var stateStorageAccountName = 'st${platformPrefix}state${uniqueString(subscription().id)}'
 
 var contributorRoleDefinitionGuid = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var userAccessAdministratorRoleDefinitionGuid = '18d7d88d-d35e-4fb5-a5c3-7773c20a72d9'
@@ -65,8 +67,31 @@ module adminRoles 'modules/role-assignments.bicep' = {
   }
 }
 
+// Terraform state backend: one shared, keyless storage account for every root's state.
+module stateStorage 'modules/state-storage.bicep' = {
+  name: 'state-storage'
+  scope: managementResourceGroup
+  params: {
+    storageAccountName: stateStorageAccountName
+    location: location
+    tags: union(commonTags, {
+      lifecycle: 'persistent'
+      purpose: 'terraform-state'
+    })
+    stateContributorPrincipalIds: [
+      adminIdentity.outputs.principalId
+    ]
+  }
+}
+
 @description('Client ID of the admin managed identity. Store only as a protected GitHub environment value after deployment.')
 output adminIdentityClientId string = adminIdentity.outputs.clientId
 
 @description('Name of the platform management resource group.')
 output managementResourceGroupName string = managementResourceGroup.name
+
+@description('Terraform state storage account name (for backend -backend-config).')
+output stateStorageAccountName string = stateStorage.outputs.storageAccountName
+
+@description('Blob container holding Terraform state.')
+output stateContainerName string = stateStorage.outputs.stateContainerName

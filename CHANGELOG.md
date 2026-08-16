@@ -22,6 +22,12 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 - `bootstrap-trust/modules/identity.bicep` — generic, reusable managed-identity + GitHub
   OIDC (OpenID Connect) federated-credential module (parameterised `credentialName`), replacing
   the single-purpose `bootstrap-identity.bicep`.
+- `bootstrap-trust/modules/state-storage.bicep` — hardened, keyless (Entra-only) Terraform
+  state backend: a storage account (`Standard_LRS`, shared keys disabled, no public blob, TLS 1.2)
+  with blob versioning + 7-day soft-delete, a private `tfstate` container, and a list-based
+  Storage Blob Data Contributor grant (admin now, vending identity later).
+- `.github/copilot-instructions.md` — repository Copilot instructions (always expand acronyms;
+  step-by-step, teaching-oriented working style).
 
 ### Changed
 
@@ -40,3 +46,8 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   with a GitHub OIDC (OpenID Connect) federated credential and Contributor + UAA (User Access
   Administrator) scoped to that RG. Dropped the workload sandbox RG and workload-prefix; naming is
   read from `config/project.json` via `loadJsonContent`. Deployed and verified via `az deployment sub create`.
+- Moved the Terraform state backend from the `management/` Terraform root **into the Bicep seed**
+  (`bootstrap-trust/`): `main.bicep` now provisions the hardened state storage account (name via
+  `uniqueString(subscription().id)`) and outputs it for `-backend-config`. This removes the state
+  chicken-and-egg (Bicep needs no backend) and stops Terraform from owning its own state store.
+  Deployed and verified; the now-redundant `management/` root will be retired next.
