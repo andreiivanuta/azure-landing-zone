@@ -1,15 +1,26 @@
-variable "workloads" {
-  description = "Workloads to vend, keyed by workload name. Each entry is a declaration passed to the workload-identity module. Real values live in a gitignored workloads.auto.tfvars (the manual intake form)."
-  type = map(object({
+variable "workload_name" {
+  description = "Short lowercase name of the workload being vended (matches its intake file, e.g. \"taks\"). Also used as the state key."
+  type        = string
+}
+
+variable "workload" {
+  description = "The single workload declaration, supplied via -var-file=workloads/<name>.tfvars. One workload = one state file."
+  type = object({
     subject_prefix      = string
     resource_group_name = string
+    location            = string
+    location_code       = string
     identities = map(object({
       resource_group_role = string
       state_role          = string
       environments        = list(string)
     }))
-  }))
-  default = {}
+  })
+}
+
+variable "state_storage_account_name" {
+  description = "Name of the Bicep-provisioned Terraform state storage account (uniqueString-based; supplied by the pipeline from the Bicep output)."
+  type        = string
 }
 
 variable "tags" {

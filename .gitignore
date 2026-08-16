@@ -16,6 +16,8 @@ override.tf.json
 *.tfvars.json
 !*.tfvars.example
 !*.tfvars.json.example
+# The per-workload vending registry is COMMITTED (no secrets: repo IDs, RG names, role names).
+!vending/workloads/*.tfvars
 
 # Terraform and cloud credentials
 .terraformrc

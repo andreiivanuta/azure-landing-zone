@@ -28,6 +28,8 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   Storage Blob Data Contributor grant (admin now, vending identity later).
 - `.github/copilot-instructions.md` — repository Copilot instructions (always expand acronyms;
   step-by-step, teaching-oriented working style).
+- `vending/workloads/taks.tfvars.example` — per-workload intake template for the new
+  one-file-per-workload registry (`vending/workloads/<name>.tfvars`, committed via a `.gitignore` exception).
 
 ### Changed
 
@@ -50,4 +52,17 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   (`bootstrap-trust/`): `main.bicep` now provisions the hardened state storage account (name via
   `uniqueString(subscription().id)`) and outputs it for `-backend-config`. This removes the state
   chicken-and-egg (Bicep needs no backend) and stops Terraform from owning its own state store.
-  Deployed and verified; the now-redundant `management/` root will be retired next.
+  Deployed and verified.
+- Removed the now-redundant `management/` Terraform root (the state backend lives in Bicep).
+- Reworked `vending/` from a `workloads` **map** (one shared state) to a **single per-workload**
+  model (`var.workload` + `var.workload_name`, module called once): each workload gets its own state
+  file via `-backend-config="key=<name>.tfstate"`, isolating blast radius per workload. The state
+  account name is now supplied as a variable (from the Bicep output) rather than recomputed, and the
+  per-workload declarations live in a committed registry `vending/workloads/<name>.tfvars`.
+- Made a vended identity's **region per-workload**: each workload declares its own `location` /
+  `location_code`; `config/project.json` is now used only for the platform management resource group.
+
+### Fixed
+
+- `modules/workload-identity`: replaced the deprecated `parent_id` + `resource_group_name` arguments on
+  `azurerm_federated_identity_credential` with the single `user_assigned_identity_id` (required by azurerm v5).

@@ -1,41 +1,36 @@
-data "azurerm_client_config" "current" {}
-
 locals {
-  # Same naming source as every other root; this root stays workload-agnostic.
+  # Platform naming from the shared config — used ONLY for the management RG + state account.
+  # A workload's own region and name come from its tfvars, never from here.
   config = jsondecode(file("${path.module}/../config/project.json"))
 
-  platform_prefix = local.config.platformPrefix
-  location_code   = local.config.locationCode
-  location        = local.config.location
+  platform_prefix        = local.config.platformPrefix
+  platform_location_code = local.config.locationCode
 
-  management_resource_group_name = "rg-${local.platform_prefix}-management-${local.location_code}"
-  state_storage_account_name     = "st${local.platform_prefix}state${substr(sha1(data.azurerm_client_config.current.subscription_id), 0, 8)}"
+  management_resource_group_name = "rg-${local.platform_prefix}-management-${local.platform_location_code}"
 }
 
-# Shared platform resources created by the management root; referenced here.
+# The state account is provisioned by the Bicep seed; its uniqueString-based name can't be derived here, so it's passed in.
 data "azurerm_storage_account" "state" {
-  name                = local.state_storage_account_name
+  name                = var.state_storage_account_name
   resource_group_name = local.management_resource_group_name
 }
 
-# Each workload's own resource group (assumed to exist; created by the trust anchor for now).
+# The workload's own resource group (assumed to already exist).
 data "azurerm_resource_group" "workload" {
-  for_each = var.workloads
-  name     = each.value.resource_group_name
+  name = var.workload.resource_group_name
 }
 
-# Vend each workload's identities through the guardrailed module.
+# Vend this one workload's identities through the guardrailed module.
 module "workload" {
-  source   = "../modules/workload-identity"
-  for_each = var.workloads
+  source = "../modules/workload-identity"
 
-  workload_name                  = each.key
-  location                       = local.location
-  location_code                  = local.location_code
+  workload_name                  = var.workload_name
+  location                       = var.workload.location
+  location_code                  = var.workload.location_code
   management_resource_group_name = local.management_resource_group_name
-  workload_resource_group_id     = data.azurerm_resource_group.workload[each.key].id
+  workload_resource_group_id     = data.azurerm_resource_group.workload.id
   state_storage_account_id       = data.azurerm_storage_account.state.id
-  subject_prefix                 = each.value.subject_prefix
-  identities                     = each.value.identities
+  subject_prefix                 = var.workload.subject_prefix
+  identities                     = var.workload.identities
   tags                           = var.tags
 }

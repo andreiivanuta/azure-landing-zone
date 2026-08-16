@@ -24,12 +24,11 @@ resource "azurerm_user_assigned_identity" "this" {
 resource "azurerm_federated_identity_credential" "this" {
   for_each = local.federations
 
-  name                = "github-${each.value.environment}"
-  resource_group_name = var.management_resource_group_name
-  parent_id           = azurerm_user_assigned_identity.this[each.value.identity].id
-  audience            = [var.audience]
-  issuer              = var.issuer
-  subject             = "${var.subject_prefix}:environment:${each.value.environment}"
+  name                      = "github-${each.value.environment}"
+  user_assigned_identity_id = azurerm_user_assigned_identity.this[each.value.identity].id
+  audience                  = [var.audience]
+  issuer                    = var.issuer
+  subject                   = "${var.subject_prefix}:environment:${each.value.environment}"
 }
 
 # Control-plane RBAC — only ever on the workload's own resource group.

@@ -1,0 +1,32 @@
+# Per-workload intake — ONE file per workload (the committed registry).
+# The pipeline applies this file with its own state key:
+#   terraform init  -backend-config="key=<name>.tfstate"
+#   terraform apply -var="workload_name=<name>" -var-file="workloads/<name>.tfvars"
+# The module's guardrails (modules/workload-identity) reject anything outside policy.
+#
+# Copy to workloads/taks.tfvars, fill in the real repo owner/ids, and commit it.
+
+workload = {
+  subject_prefix      = "repo:OWNER@OWNER_ID/terraform-aks-sandbox@REPO_ID"
+  resource_group_name = "rg-taks-sandbox-swc"
+  location            = "swedencentral"
+  location_code       = "swc"
+
+  identities = {
+    plan = {
+      resource_group_role = "Reader"
+      state_role          = "Storage Blob Data Reader"
+      environments        = ["aks-plan"]
+    }
+    deploy = {
+      resource_group_role = "Contributor"
+      state_role          = "Storage Blob Data Contributor"
+      environments        = ["aks-apply", "aks-destroy"]
+    }
+    cleanup = {
+      resource_group_role = "Contributor"
+      state_role          = "Storage Blob Data Contributor"
+      environments        = ["ttl-cleanup"]
+    }
+  }
+}
