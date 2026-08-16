@@ -1,0 +1,26 @@
+# Diagnostic: proves GitHub Actions can authenticate to Azure via OIDC (no stored secret),
+# as the admin identity. Run manually from the Actions tab or with `gh workflow run`.
+# NOTE: pin actions to commit SHAs before treating any workflow as production.
+name: OIDC smoke test
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # required to mint the GitHub OIDC token
+  contents: read
+
+jobs:
+  login:
+    runs-on: ubuntu-latest
+    environment: admin # subject becomes :environment:admin; enforces the dev-only branch policy
+    steps:
+      - name: Azure login (OIDC, no secret)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prove we're authenticated
+        run: az account show --output table

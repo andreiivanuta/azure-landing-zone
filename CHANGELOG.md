@@ -30,6 +30,8 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   step-by-step, teaching-oriented working style).
 - `vending/workloads/taks.tfvars.example` — per-workload intake template for the new
   one-file-per-workload registry (`vending/workloads/<name>.tfvars`, committed via a `.gitignore` exception).
+- `.github/workflows/oidc-smoke-test.yml` — manual diagnostic that verifies GitHub Actions can
+  authenticate to Azure via OIDC (OpenID Connect) as the admin identity, with no stored secret.
 
 ### Changed
 
