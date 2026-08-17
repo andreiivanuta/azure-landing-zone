@@ -67,6 +67,20 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   per-workload declarations live in a committed registry `vending/workloads/<name>.tfvars`.
 - Made a vended identity's **region per-workload**: each workload declares its own `location` /
   `location_code`; `config/project.json` is now used only for the platform management resource group.
+- Extended the Bicep trust anchor (`bootstrap-trust/main.bicep`) to provision the **bounded vending
+  identity** and its least-privilege authority: a new identity resource group `rg-alz-identity-swc`
+  (holds all vended workload identities), the `id-alz-vending-swc` managed identity with a
+  `github-vending` OIDC (OpenID Connect) federated credential, a **custom role**
+  `Landing Zone Vendor (alz)` (create/read/delete resource groups, manage user-assigned identities +
+  federated credentials, read/write/delete role assignments, read role definitions and storage
+  accounts — no Contributor/Owner) assigned to the vending identity at subscription scope, and a
+  Storage Blob Data Contributor grant on the state account. Adds outputs `vendingIdentityClientId`
+  and `identityResourceGroupName`. Verified via what-if + `az deployment sub create`.
+- Reworked `bootstrap-trust/deploy.ps1` to seed **both** platform environments in a single run: it now
+  derives the admin and vending OIDC (OpenID Connect) subjects, passes both to the deployment, and wires
+  each environment's branch policy and login values through a shared `Set-PlatformEnvironment` helper —
+  `admin` reachable from `dev` only (break-glass), `vending` from `dev` + `main` (dev previews a
+  `terraform plan`, main runs `terraform apply`).
 
 ### Fixed
 

@@ -4,6 +4,10 @@ targetScope = 'subscription'
 @minLength(1)
 param adminOidcSubject string
 
+@description('Exact immutable GitHub Actions OIDC subject for the vending environment. Provide this at deployment time; do not commit it.')
+@minLength(1)
+param vendingOidcSubject string
+
 @description('Optional tags merged with the platform tags.')
 param additionalTags object = {}
 
@@ -14,7 +18,9 @@ var locationCode = config.locationCode
 var location = config.location
 
 var managementResourceGroupName = 'rg-${platformPrefix}-management-${locationCode}'
+var identityResourceGroupName = 'rg-${platformPrefix}-identity-${locationCode}'
 var adminIdentityName = 'id-${platformPrefix}-admin-${locationCode}'
+var vendingIdentityName = 'id-${platformPrefix}-vending-${locationCode}'
 // Deterministic, globally-unique name; the subscription hash keeps the ID out of source.
 var stateStorageAccountName = 'st${platformPrefix}state${uniqueString(subscription().id)}'
 
@@ -34,6 +40,17 @@ resource managementResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01'
   tags: union(commonTags, {
     lifecycle: 'persistent'
     purpose: 'platform-management'
+  })
+}
+
+// Persistent home for the workload identities the vending pipeline mints (CAF identity archetype).
+resource identityResourceGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = {
+  name: identityResourceGroupName
+  location: location
+  tags: union(commonTags, {
+    lifecycle: 'persistent'
+    purpose: 'workload-identities'
+    layer: 'identity'
   })
 }
 
@@ -67,6 +84,62 @@ module adminRoles 'modules/role-assignments.bicep' = {
   }
 }
 
+// Vending identity: bounded automation that mints workload identities. Lives in management (platform automation);
+// its permissions (custom role + state access) are granted in the steps below.
+module vendingIdentity 'modules/identity.bicep' = {
+  name: 'vending-identity'
+  scope: managementResourceGroup
+  params: {
+    identityName: vendingIdentityName
+    location: location
+    credentialName: 'github-vending'
+    oidcSubject: vendingOidcSubject
+    tags: union(commonTags, {
+      lifecycle: 'persistent'
+      purpose: 'github-vending-oidc'
+    })
+  }
+}
+
+// Custom role: exactly what vending needs to mint a workload landing zone - and nothing more.
+resource landingZoneVendorRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(subscription().id, 'landing-zone-vendor')
+  properties: {
+    roleName: 'Landing Zone Vendor (${platformPrefix})'
+    description: 'Vend workload landing zones: create resource groups, user-assigned identities + federated credentials, and role assignments. No Contributor/Owner.'
+    type: 'CustomRole'
+    assignableScopes: [
+      subscription().id
+    ]
+    permissions: [
+      {
+        actions: [
+          'Microsoft.Resources/subscriptions/resourceGroups/read'
+          'Microsoft.Resources/subscriptions/resourceGroups/write'
+          'Microsoft.Resources/subscriptions/resourceGroups/delete'
+          'Microsoft.ManagedIdentity/userAssignedIdentities/*'
+          'Microsoft.Authorization/roleAssignments/read'
+          'Microsoft.Authorization/roleAssignments/write'
+          'Microsoft.Authorization/roleAssignments/delete'
+          'Microsoft.Authorization/roleDefinitions/read'
+          'Microsoft.Storage/storageAccounts/read'
+        ]
+      }
+    ]
+  }
+}
+
+// Grant the vending identity that custom role at subscription scope, so it can vend into any workload RG.
+resource vendingRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, vendingIdentityName, landingZoneVendorRole.id)
+  properties: {
+    roleDefinitionId: landingZoneVendorRole.id
+    principalId: vendingIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Vending identity may create workload RGs, identities, and role assignments (Landing Zone Vendor custom role).'
+  }
+}
+
 // Terraform state backend: one shared, keyless storage account for every root's state.
 module stateStorage 'modules/state-storage.bicep' = {
   name: 'state-storage'
@@ -80,6 +153,7 @@ module stateStorage 'modules/state-storage.bicep' = {
     })
     stateContributorPrincipalIds: [
       adminIdentity.outputs.principalId
+      vendingIdentity.outputs.principalId
     ]
   }
 }
@@ -87,8 +161,14 @@ module stateStorage 'modules/state-storage.bicep' = {
 @description('Client ID of the admin managed identity. Store only as a protected GitHub environment value after deployment.')
 output adminIdentityClientId string = adminIdentity.outputs.clientId
 
+@description('Client ID of the vending managed identity. Store as the vending environment value after deployment.')
+output vendingIdentityClientId string = vendingIdentity.outputs.clientId
+
 @description('Name of the platform management resource group.')
 output managementResourceGroupName string = managementResourceGroup.name
+
+@description('Name of the resource group that holds vended workload identities.')
+output identityResourceGroupName string = identityResourceGroup.name
 
 @description('Terraform state storage account name (for backend -backend-config).')
 output stateStorageAccountName string = stateStorage.outputs.storageAccountName
