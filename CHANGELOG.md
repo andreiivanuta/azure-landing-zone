@@ -100,3 +100,7 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 - `vending/main.tf`: corrected the shared-config lookup from `local.config.prefix` to
   `local.config.platformPrefix` (the key in `config/project.json` is `platformPrefix`, so the previous
   form would have failed `terraform plan`).
+- `.github/workflows/vending.yml`: supply the required `state_storage_account_name` variable to Terraform
+  via `TF_VAR_state_storage_account_name` in the job `env` (sourced from the `STATE_STORAGE_ACCOUNT_NAME`
+  repo variable). The `plan` step previously passed it only to `-backend-config`, so `terraform plan
+  -input=false` would have failed with "No value for required variable".

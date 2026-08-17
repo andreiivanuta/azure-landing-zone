@@ -25,6 +25,9 @@ jobs:
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # Required Terraform input: the Bicep-provisioned state storage account name (repo variable, non-secret).
+      # Terraform maps TF_VAR_<name> onto the `state_storage_account_name` variable the state data source reads.
+      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
