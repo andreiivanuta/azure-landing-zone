@@ -81,8 +81,22 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   each environment's branch policy and login values through a shared `Set-PlatformEnvironment` helper —
   `admin` reachable from `dev` only (break-glass), `vending` from `dev` + `main` (dev previews a
   `terraform plan`, main runs `terraform apply`).
+- `.github/workflows/vending.yml` — first vending pipeline (v1): manual `workflow_dispatch` `plan` for
+  one workload, running under the bounded `vending` GitHub environment (not `admin`), with OIDC-only
+  Azure auth. PR-plan / merge-apply and a changed-workload matrix are the next iteration.
+- `vending/`: the workload RG is now **created and destroyed by vending itself** (was a `data` source
+  that assumed a pre-existing RG). Onboarding a workload no longer requires a manual RG create.
+- `modules/workload-identity` + `vending/`: vended UAMIs (User-Assigned Managed Identities) now land in
+  the dedicated identity RG `rg-alz-identity-swc` instead of the management RG. Renamed the module
+  input `management_resource_group_name` → `identity_resource_group_name` to match.
+- Refreshed `bootstrap-trust/README.md`, `docs/implementation-plan.md`, and `docs/security-model.md`
+  to describe the current admin + vending + identity-RG + custom-role design (they still described the
+  earlier single-`bootstrap`-environment model).
 
 ### Fixed
 
 - `modules/workload-identity`: replaced the deprecated `parent_id` + `resource_group_name` arguments on
   `azurerm_federated_identity_credential` with the single `user_assigned_identity_id` (required by azurerm v5).
+- `vending/main.tf`: corrected the shared-config lookup from `local.config.prefix` to
+  `local.config.platformPrefix` (the key in `config/project.json` is `platformPrefix`, so the previous
+  form would have failed `terraform plan`).

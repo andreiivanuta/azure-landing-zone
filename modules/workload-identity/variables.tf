@@ -22,8 +22,8 @@ variable "location_code" {
   type        = string
 }
 
-variable "management_resource_group_name" {
-  description = "Persistent platform resource group where the identities are created, so they outlive the disposable workload."
+variable "identity_resource_group_name" {
+  description = "Persistent platform identity resource group where the vended identities are created, so they outlive the disposable workload."
   type        = string
 }
 

@@ -15,7 +15,7 @@ resource "azurerm_user_assigned_identity" "this" {
   for_each = var.identities
 
   name                = "id-${var.workload_name}-${each.key}-${var.location_code}"
-  resource_group_name = var.management_resource_group_name
+  resource_group_name = var.identity_resource_group_name
   location            = var.location
   tags                = var.tags
 }

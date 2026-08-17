@@ -1,0 +1,47 @@
+# Vending pipeline: provisions a workload's landing-zone identities from its intake file.
+# v1 = manual `plan` for one workload. PR-plan / merge-apply + a changed-workload matrix come next.
+# NOTE: pin actions to commit SHAs before treating any workflow as production.
+name: Vend workload identities
+
+on:
+  workflow_dispatch:
+    inputs:
+      workload:
+        description: "Workload name (matches vending/workloads/<name>.tfvars)"
+        required: true
+        type: string
+
+permissions:
+  id-token: write # OIDC login to Azure (provider + backend)
+  contents: read # checkout the repo
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    environment: vending # subject :environment:vending; bounded identity, dev+main branch policy
+    env:
+      # Terraform (provider + backend) authenticates via GitHub OIDC - no secret.
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (this workload's own state)
+        run: >
+          terraform -chdir=vending init -input=false
+          -backend-config="resource_group_name=rg-alz-management-swc"
+          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ inputs.workload }}.tfstate"
+
+      - name: Terraform plan
+        run: >
+          terraform -chdir=vending plan -input=false
+          -var="workload_name=${{ inputs.workload }}"
+          -var-file="workloads/${{ inputs.workload }}.tfvars"

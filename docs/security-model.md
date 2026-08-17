@@ -4,28 +4,37 @@
 
 The project separates persistent platform (control-plane) resources from the disposable workload resources they support.
 
-### Persistent bootstrap boundary
+### Persistent platform boundary (this repo)
 
-The minimal trust-anchor Bicep deployment will own:
+The subscription-scope Bicep trust anchor (`bootstrap-trust/main.bicep`) owns:
 
-- The bootstrap and disposable resource groups.
-- The bootstrap user-assigned managed identity.
-- Its exact GitHub OIDC federated credential and resource-group-scoped role assignments.
+- The management RG (Resource Group) `rg-alz-management-swc` and the identity RG `rg-alz-identity-swc`.
+- The admin UAMI (User-Assigned Managed Identity) `id-alz-admin-swc` and its GitHub OIDC federated credential (`github-admin`).
+- The vending UAMI `id-alz-vending-swc` and its GitHub OIDC federated credential (`github-vending`).
+- The custom role `Landing Zone Vendor (alz)` at subscription scope, assigned to the vending identity.
+- The shared Terraform state SA (Storage Account) inside the management RG, with Storage Blob Data Contributor granted to admin and vending.
+- Admin's Contributor + UAA (User Access Administrator) role assignments, scoped only to the management RG.
 
-The bootstrap Terraform root will then own:
+The vending Terraform root (`vending/`) then owns, per workload:
 
-- The remote-state storage account and blob container.
-- Plan, deployment, and cleanup identities and their federated identity credentials.
-- Narrow Azure role assignments required by automation.
-- Optional persistent audit and monitoring resources.
+- One workload RG (`rg-<workload>-swc`) created and destroyed with the workload.
+- One UAMI per role (typically plan / deploy / cleanup), living in the identity RG so identities outlive the workload RG.
+- One federated credential per (identity, environment) pair with an exact OIDC subject and no wildcards.
+- Scoped RBAC (Role-Based Access Control) on the workload RG and on the state SA \u2014 nothing else.
 
-This split breaks the initial authentication and state-backend dependency cycle without local Terraform state. Routine workload workflows must not be able to delete or modify this boundary. Bootstrap changes require a separate, explicitly approved process operated by a trusted human identity.
+This split breaks the initial authentication and state-backend dependency cycle without local Terraform state: Bicep needs no backend, and by the time Terraform runs, the state SA already exists. Routine workload workflows must not be able to modify anything in this platform boundary. Changes to the trust anchor require re-running `bootstrap-trust/deploy.ps1` locally as the trusted human.
 
 ### Workload boundary
 
-The workload's AKS Terraform root lives in the workload repository and owns the ephemeral cluster and its supporting resources.
+The workload's Terraform root lives in the workload repository and owns the ephemeral cluster and its supporting resources.
 
-The platform grants the apply, destroy, and TTL-cleanup identities access scoped only to the designated workload resource group and the minimum remote-state data access they require. It never grants them access to this platform boundary.
+The vended plan, deploy, and cleanup identities are granted access scoped only to the designated workload RG and the state SA. They never receive access to this platform boundary. The module's guardrails enforce this at plan time:
+
+- control-plane roles limited to Reader or Contributor (never Owner or role-granting rights);
+- state roles limited to Storage Blob Data Reader or Storage Blob Data Contributor;
+- scope locked to the workload's own RG and the shared state SA;
+- exact, wildcard-free OIDC subjects \u2014 one repository per credential;
+- at least one environment per identity.
 
 ## GitHub trust model
 
