@@ -31,7 +31,11 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 - `vending/workloads/taks.tfvars.example` — per-workload intake template for the new
   one-file-per-workload registry (`vending/workloads/<name>.tfvars`, committed via a `.gitignore` exception).
 - `.github/workflows/oidc-smoke-test.yml` — manual diagnostic that verifies GitHub Actions can
-  authenticate to Azure via OIDC (OpenID Connect) as the admin identity, with no stored secret.
+  authenticate to Azure via OIDC (OpenID Connect) as the admin identity **and** reach the Terraform
+  state backend (`terraform init` via `ARM_USE_OIDC`), with no stored secret.
+- `bootstrap-trust/deploy.ps1` — one-step local bootstrap: deploys the Bicep trust anchor and seeds
+  the GitHub values it produces (admin-environment `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` variables,
+  `AZURE_SUBSCRIPTION_ID` secret, and the repo `STATE_STORAGE_ACCOUNT_NAME` variable). Idempotent; no IDs hardcoded.
 
 ### Changed
 
