@@ -1,6 +1,10 @@
-# Vending pipeline: provisions a workload's landing-zone identities from its intake file.
-# v1 = manual `plan` for one workload. PR-plan / merge-apply + a changed-workload matrix come next.
-# NOTE: pin actions to commit SHAs before treating any workflow as production.
+# Vending pipeline: create or offboard a workload's landing-zone shell (RG + identities) from its intake file.
+# Actions:
+#   plan    = speculative preview only (no changes)
+#   apply   = plan -> show in job summary -> apply the SAVED plan (creates/updates)
+#   destroy = plan -destroy -> show in job summary -> apply the SAVED plan (offboards)
+# One workload = one state file (key=<workload>.tfstate). apply/destroy always show the plan first (plan-as-gate).
+# NOTE: pin actions to commit SHAs, and add a required reviewer on the `vending` environment, before production.
 name: Vend workload identities
 
 on:
@@ -10,13 +14,26 @@ on:
         description: "Workload name (matches vending/workloads/<name>.tfvars)"
         required: true
         type: string
+      action:
+        description: "plan = preview | apply = create/update | destroy = offboard (remove RG + identities)"
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      confirm:
+        description: "To DESTROY, type the workload name here to confirm. Ignored for plan/apply."
+        required: false
+        type: string
 
 permissions:
   id-token: write # OIDC login to Azure (provider + backend)
   contents: read # checkout the repo
 
 jobs:
-  plan:
+  vend:
     runs-on: ubuntu-latest
     environment: vending # subject :environment:vending; bounded identity, dev+main branch policy
     env:
@@ -29,6 +46,14 @@ jobs:
       # Terraform maps TF_VAR_<name> onto the `state_storage_account_name` variable the state data source reads.
       TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
     steps:
+      - name: Guard - confirm destroy
+        if: inputs.action == 'destroy'
+        run: |
+          if [ "${{ inputs.confirm }}" != "${{ inputs.workload }}" ]; then
+            echo "::error::To destroy, set 'confirm' to the workload name ('${{ inputs.workload }}')."
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -43,8 +68,49 @@ jobs:
           -backend-config="container_name=tfstate"
           -backend-config="key=${{ inputs.workload }}.tfstate"
 
-      - name: Terraform plan
-        run: >
-          terraform -chdir=vending plan -input=false
-          -var="workload_name=${{ inputs.workload }}"
-          -var-file="workloads/${{ inputs.workload }}.tfvars"
+      - name: Terraform plan (preview only)
+        if: inputs.action == 'plan'
+        run: |
+          terraform -chdir=vending plan -input=false -out=tf.plan \
+            -var="workload_name=${{ inputs.workload }}" \
+            -var-file="workloads/${{ inputs.workload }}.tfvars"
+          {
+            echo "### Terraform plan (preview) - \`${{ inputs.workload }}\`"
+            echo '```terraform'
+            terraform -chdir=vending show -no-color tf.plan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform plan (for apply)
+        if: inputs.action == 'apply'
+        run: |
+          terraform -chdir=vending plan -input=false -out=tf.plan \
+            -var="workload_name=${{ inputs.workload }}" \
+            -var-file="workloads/${{ inputs.workload }}.tfvars"
+          {
+            echo "### Terraform plan (apply) - \`${{ inputs.workload }}\`"
+            echo '```terraform'
+            terraform -chdir=vending show -no-color tf.plan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform apply (saved plan)
+        if: inputs.action == 'apply'
+        run: terraform -chdir=vending apply -input=false tf.plan
+
+      - name: Terraform plan (for destroy)
+        if: inputs.action == 'destroy'
+        run: |
+          terraform -chdir=vending plan -destroy -input=false -out=tf.plan \
+            -var="workload_name=${{ inputs.workload }}" \
+            -var-file="workloads/${{ inputs.workload }}.tfvars"
+          {
+            echo "### Terraform plan (DESTROY) - \`${{ inputs.workload }}\`"
+            echo '```terraform'
+            terraform -chdir=vending show -no-color tf.plan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Terraform destroy (saved plan)
+        if: inputs.action == 'destroy'
+        run: terraform -chdir=vending apply -input=false tf.plan
