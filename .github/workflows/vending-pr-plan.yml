@@ -186,15 +186,10 @@ jobs:
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
-      - name: Read protection + owner + live RG inventory
+      - name: Read owner + live RG inventory
         id: meta
         run: |
           f="vending/workloads/${{ matrix.workload }}.tfvars"
-          if grep -Eq '^[[:space:]]*deletion_protection[[:space:]]*=[[:space:]]*false\b' "$f"; then
-            echo "protected=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "protected=true" >> "$GITHUB_OUTPUT"
-          fi
           owner=$(sed -n 's/^[[:space:]]*owner[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1)
           echo "owner=$owner" >> "$GITHUB_OUTPUT"
           # Live blast-radius: what does the RG actually contain right now? (read-only PR identity has Reader)
@@ -214,13 +209,12 @@ jobs:
         env:
           WORKLOAD: ${{ matrix.workload }}
           MODE: destroy
-          PROTECTED: ${{ steps.meta.outputs.protected }}
           OWNER: ${{ steps.meta.outputs.owner }}
           RGCOUNT: ${{ steps.meta.outputs.rgcount }}
         with:
           script: |
             const fs = require('fs');
-            const { WORKLOAD, MODE, PROTECTED, OWNER, RGCOUNT } = process.env;
+            const { WORKLOAD, MODE, OWNER, RGCOUNT } = process.env;
             let out = fs.readFileSync('plan.txt', 'utf8');
             const max = 60000;
             if (out.length > max) out = out.slice(0, max) + '\n... (truncated) ...';
@@ -228,9 +222,7 @@ jobs:
             try { inv = fs.readFileSync('rg_inventory.txt', 'utf8'); } catch (e) { inv = '(inventory unavailable)'; }
             const marker = `<!-- vending-pr-plan:${MODE}:${WORKLOAD} -->`;
             const ownerLine = OWNER ? `\n> **Owner:** ${OWNER} — reach out before offboarding.` : '';
-            const banner = PROTECTED === 'true'
-              ? `> ⛔ **Deletion-protected.** Merging will **not** offboard this workload — the destroy workflow refuses until \`deletion_protection = false\` is set in a separate PR.${ownerLine}`
-              : `> ⚠️ **Not protected.** Merging will re-plan and run \`terraform destroy\` for this workload.${ownerLine}`;
+            const banner = `> ⚠️ **Merging offboards this workload** — a fresh \`terraform destroy\` is re-planned and applied on merge.${ownerLine}`;
             const blast = (RGCOUNT && RGCOUNT !== '0')
               ? `> 💥 **Blast radius:** the resource group still contains **${RGCOUNT}** resource(s) (below). Deleting the RG deletes these too — the destroy workflow will **refuse** unless forced.`
               : `> ✅ **Blast radius:** the resource group is empty of workload resources.`;

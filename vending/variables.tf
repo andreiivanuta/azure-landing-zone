@@ -10,9 +10,6 @@ variable "workload" {
     resource_group_name = string
     location            = optional(string)
     location_code       = optional(string)
-    # Safety: a protected workload cannot be offboarded by simply deleting its file — the destroy
-    # workflow refuses until this is explicitly set to false in a PR (default ON, safe by default).
-    deletion_protection = optional(bool, true)
     # Optional human/team owner (email or GitHub handle) — surfaced on the RG tag and in destroy previews.
     owner = optional(string)
     identities = optional(map(object({
