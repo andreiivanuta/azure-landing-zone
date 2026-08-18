@@ -1,7 +1,6 @@
 # Workload intake: terraform-aks-sandbox (taks). Committed registry — no secrets.
 # subject_prefix binds every vended federated credential to this exact repo (owner id + repo id).
 # The module appends ":environment:<name>" per environment listed below.
-# Re-onboarding via PR (2026-08-18): exercises the PR plan preview + gated apply cycle.
 
 workload = {
   subject_prefix      = "repo:andreiivanuta@124058262/terraform-aks-sandbox@1331742868"
