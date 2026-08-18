@@ -1,10 +1,14 @@
-# Automated CREATE/UPDATE flow. On merge to main, DOWNLOAD the exact plan that was reviewed on the PR
-# (uploaded as an artifact by vending-pr-plan.yml) and apply it. So what deploys is byte-for-byte what was
-# approved. If the state moved since the plan was saved, `terraform apply <planfile>` refuses (stale plan) and
-# fails safe - forcing a fresh PR/review. The plan is NOT recomputed here.
-#   detect job : which workloads changed + find the PR-plan run that produced the reviewed plan.
-#   apply job  : download that plan, log in as the vending write identity, `terraform apply tf.plan`,
-#                then seed the workload repo (its environments + login values) with a repo-scoped GitHub App token.
+# Automated CREATE/UPDATE flow (convergent). On merge to main, RE-PLAN the changed workloads against
+# current state and apply. The PR posted a human-readable plan preview for review (the gate); here we
+# compute a fresh plan and apply it, so a re-run is always safe: `terraform apply` is a no-op when
+# nothing changed, and Terraform's own state locking/serial checks keep it correct.
+#
+# Because it re-plans, this workflow is safely RE-RUNNABLE and can be triggered manually
+# (workflow_dispatch) to recover from a transient failure (e.g. a hiccup in the seeding step) without
+# opening a new PR. After apply, it seeds the workload repo's login values (repo-level variables) via a
+# repo-scoped GitHub App token.
+#   detect job : which workloads to apply (push diff, or the workflow_dispatch input).
+#   apply job  : log in as the vending write identity, `terraform apply` (fresh), then seed the repo.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending apply (create/update)
 
@@ -13,69 +17,67 @@ on:
     branches: [main]
     paths:
       - "vending/workloads/**"
+  workflow_dispatch:
+    inputs:
+      workload:
+        description: "Workload to apply + seed. Leave empty to reconcile ALL current workloads."
+        required: false
+        default: ""
 
 permissions:
   id-token: write # OIDC login to Azure
   contents: read # checkout
-  actions: read # download the artifact from the PR-plan run
-  pull-requests: read # correlate the merge commit to its PR
 
 concurrency:
   group: vending-apply # serialize successive create/update runs; destroy has its own group
   cancel-in-progress: false
 
 jobs:
-  # 1) Which workloads were added/changed, and which PR-plan run holds their reviewed plan?
+  # 1) Which workloads should we apply? On push: the added/changed intake files. On manual dispatch:
+  #    the named workload, or ALL current workloads when the input is left empty (idempotent reconcile).
   detect:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     outputs:
-      workloads: ${{ steps.diff.outputs.workloads }}
-      any: ${{ steps.diff.outputs.any }}
-      pr_head_sha: ${{ steps.correlate.outputs.pr_head_sha }}
-      plan_run_id: ${{ steps.correlate.outputs.plan_run_id }}
+      workloads: ${{ steps.pick.outputs.workloads }}
+      any: ${{ steps.pick.outputs.any }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - id: diff
-        name: Detect added/changed workloads
+      - id: pick
+        name: Select workloads
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ github.event.inputs.workload }}
         run: |
-          base='${{ github.event.before }}'
-          head='${{ github.sha }}'
-          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
-            base=$(git rev-parse "$head^" 2>/dev/null || echo "$head")
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            if [ -n "$INPUT" ]; then
+              names="$INPUT"
+            else
+              # Reconcile everything currently declared.
+              names=$(ls vending/workloads/*.tfvars 2>/dev/null | grep -v '\.example$' \
+                | sed -n 's#.*/\([^/]*\)\.tfvars#\1#p' | sort -u)
+            fi
+          else
+            base='${{ github.event.before }}'
+            head='${{ github.sha }}'
+            if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+              base=$(git rev-parse "$head^" 2>/dev/null || echo "$head")
+            fi
+            names=$(git diff --name-only --diff-filter=ACMR "$base" "$head" -- 'vending/workloads/*.tfvars' \
+              | grep -v '\.example$' | sed -n 's#.*/\([^/]*\)\.tfvars#\1#p' | sort -u)
           fi
-          changed=$(git diff --name-only --diff-filter=ACMR "$base" "$head" -- 'vending/workloads/*.tfvars' \
-            | grep -v '\.example$' | sed -n 's#.*/\([^/]*\)\.tfvars#\1#p' | sort -u)
-          if [ -n "$changed" ]; then
-            json=$(printf '%s\n' "$changed" | jq -R . | jq -cs .)
+          if [ -n "$names" ]; then
+            json=$(printf '%s\n' "$names" | jq -R . | jq -cs .)
             echo "any=true" >> "$GITHUB_OUTPUT"
           else
             json='[]'; echo "any=false" >> "$GITHUB_OUTPUT"
           fi
           echo "workloads=$json" >> "$GITHUB_OUTPUT"
-          echo "added/changed: [$changed]"
+          echo "selected: [$names]"
 
-      - id: correlate
-        name: Find the PR-plan run that produced the reviewed plan
-        run: |
-          merge_sha='${{ github.sha }}'
-          # The merge commit is associated with its pull request; get that PR's head SHA (what PR-plan ran on).
-          pr_head=$(gh api "repos/${{ github.repository }}/commits/$merge_sha/pulls" \
-            -H "Accept: application/vnd.github+json" --jq '.[0].head.sha // empty')
-          run_id=""
-          if [ -n "$pr_head" ]; then
-            run_id=$(gh api "repos/${{ github.repository }}/actions/workflows/vending-pr-plan.yml/runs?head_sha=$pr_head&event=pull_request" \
-              --jq '[.workflow_runs[] | select(.conclusion=="success")] | .[0].id // empty')
-          fi
-          echo "pr_head_sha=$pr_head" >> "$GITHUB_OUTPUT"
-          echo "plan_run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "pr_head=$pr_head  plan_run_id=$run_id"
-
-  # 2) Apply the EXACT reviewed plan, one workload per matrix leg.
+  # 2) Re-plan + apply, one workload per matrix leg, then seed that workload's repo.
   apply:
     needs: detect
     if: needs.detect.outputs.any == 'true'
@@ -93,22 +95,14 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
     steps:
-      - name: Ensure a reviewed plan exists
-        run: |
-          if [ -z "${{ needs.detect.outputs.plan_run_id }}" ]; then
-            echo "::error::No successful vending-pr-plan run found for this merge. Workload changes must go through a PR so the reviewed plan can be applied."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
 
-      - name: Download the reviewed plan (from the PR-plan run)
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-apply-${{ matrix.workload }}-${{ needs.detect.outputs.pr_head_sha }}
-          path: vending
-          run-id: ${{ needs.detect.outputs.plan_run_id }}
-          github-token: ${{ github.token }}
+      - name: Fail early if the intake file is missing
+        run: |
+          if [ ! -f "vending/workloads/${{ matrix.workload }}.tfvars" ]; then
+            echo "::error::vending/workloads/${{ matrix.workload }}.tfvars not found on this ref."
+            exit 1
+          fi
 
       - name: Azure login (OIDC, vending write identity)
         uses: azure/login@v2
@@ -119,7 +113,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8" # pin so the merge-time apply matches the PR-time plan (saved plans need the exact version)
+          terraform_version: "1.9.8"
 
       - name: Terraform init (this workload's state key)
         run: >
@@ -129,15 +123,17 @@ jobs:
           -backend-config="container_name=tfstate"
           -backend-config="key=${{ matrix.workload }}.tfstate"
 
-      - name: Terraform apply (the exact reviewed plan)
-        run: terraform -chdir=vending apply -input=false tf.plan
+      - name: Terraform apply (fresh plan against current state)
+        run: |
+          terraform -chdir=vending apply -input=false -auto-approve \
+            -var="workload_name=${{ matrix.workload }}" \
+            -var-file="workloads/${{ matrix.workload }}.tfvars"
 
       # --- Seed the workload repo automatically with its login values (repo-level variables) ---
       # Uses a GitHub App installation token scoped to JUST this workload's repo (owner-granted, short-lived).
-      # We set REPO-LEVEL variables only (least privilege: the App needs just Variables/Secrets, not
-      # Administration). The workload's own job selects its identity by referencing a job `environment:`
-      # (which GitHub auto-creates) and reading AZURE_CLIENT_ID_<ENV>. Client IDs are not secrets; the real
-      # gate is the OIDC federated-credential subject (:environment:<env>).
+      # Repo-level variables only: the App needs just Variables/Secrets (not Administration). The workload's
+      # own job selects its identity by referencing a job `environment:` (GitHub auto-creates it) and reading
+      # AZURE_CLIENT_ID_<ENV>. Client IDs are not secrets; the real gate is the OIDC subject :environment:<env>.
       - name: Read vended outputs (repo slug + per-environment client IDs)
         id: tf
         run: |
