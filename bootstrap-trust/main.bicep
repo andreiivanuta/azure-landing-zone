@@ -8,6 +8,10 @@ param adminOidcSubject string
 @minLength(1)
 param vendingOidcSubject string
 
+@description('Exact immutable GitHub Actions OIDC subject for pull-request plan previews (ends in :pull_request). Provide this at deployment time; do not commit it.')
+@minLength(1)
+param pullRequestOidcSubject string
+
 @description('Optional tags merged with the platform tags.')
 param additionalTags object = {}
 
@@ -21,6 +25,7 @@ var managementResourceGroupName = 'rg-${platformPrefix}-management-${locationCod
 var identityResourceGroupName = 'rg-${platformPrefix}-identity-${locationCode}'
 var adminIdentityName = 'id-${platformPrefix}-admin-${locationCode}'
 var vendingIdentityName = 'id-${platformPrefix}-vending-${locationCode}'
+var planIdentityName = 'id-${platformPrefix}-vending-pr-${locationCode}'
 // Deterministic, globally-unique name; the subscription hash keeps the ID out of source.
 var stateStorageAccountName = 'st${platformPrefix}state${uniqueString(subscription().id)}'
 
@@ -140,6 +145,58 @@ resource vendingRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
+// PR-plan identity: LOWEST trust. Read-only preview (terraform plan) for untrusted pull requests.
+module planIdentity 'modules/identity.bicep' = {
+  name: 'plan-identity'
+  scope: managementResourceGroup
+  params: {
+    identityName: planIdentityName
+    location: location
+    credentialName: 'github-vending-pr'
+    oidcSubject: pullRequestOidcSubject
+    tags: union(commonTags, {
+      lifecycle: 'persistent'
+      purpose: 'github-pr-plan-oidc'
+    })
+  }
+}
+
+// Custom read-only role: exactly the read verbs `terraform plan` needs to refresh vended resources - and nothing more.
+resource landingZoneVendorReaderRole 'Microsoft.Authorization/roleDefinitions@2022-04-01' = {
+  name: guid(subscription().id, 'landing-zone-vendor-reader')
+  properties: {
+    roleName: 'Landing Zone Vendor Reader (${platformPrefix})'
+    description: 'Read-only preview of vended landing zones: read RGs, user-assigned identities + federated credentials, role assignments/definitions, and state storage metadata. No writes.'
+    type: 'CustomRole'
+    assignableScopes: [
+      subscription().id
+    ]
+    permissions: [
+      {
+        actions: [
+          'Microsoft.Resources/subscriptions/resourceGroups/read'
+          'Microsoft.ManagedIdentity/userAssignedIdentities/read'
+          'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials/read'
+          'Microsoft.Authorization/roleAssignments/read'
+          'Microsoft.Authorization/roleDefinitions/read'
+          'Microsoft.Storage/storageAccounts/read'
+        ]
+      }
+    ]
+  }
+}
+
+// Grant the read-only role at subscription scope so plan can refresh resources in any (dynamically-named) workload RG.
+resource planRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(subscription().id, planIdentityName, landingZoneVendorReaderRole.id)
+  properties: {
+    roleDefinitionId: landingZoneVendorReaderRole.id
+    principalId: planIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+    description: 'PR-plan identity may read (preview) vended landing-zone resources (Landing Zone Vendor Reader custom role).'
+  }
+}
+
 // Terraform state backend: one shared, keyless storage account for every root's state.
 module stateStorage 'modules/state-storage.bicep' = {
   name: 'state-storage'
@@ -155,6 +212,9 @@ module stateStorage 'modules/state-storage.bicep' = {
       adminIdentity.outputs.principalId
       vendingIdentity.outputs.principalId
     ]
+    stateReaderPrincipalIds: [
+      planIdentity.outputs.principalId
+    ]
   }
 }
 
@@ -163,6 +223,9 @@ output adminIdentityClientId string = adminIdentity.outputs.clientId
 
 @description('Client ID of the vending managed identity. Store as the vending environment value after deployment.')
 output vendingIdentityClientId string = vendingIdentity.outputs.clientId
+
+@description('Client ID of the PR-plan (read-only) managed identity. Store as a repo-level variable for pull_request plan jobs.')
+output planIdentityClientId string = planIdentity.outputs.clientId
 
 @description('Name of the platform management resource group.')
 output managementResourceGroupName string = managementResourceGroup.name

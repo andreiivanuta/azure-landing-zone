@@ -27,6 +27,8 @@ Write-Host "Repo=$repo  Region=$($config.location)"
 $subjectPrefix  = gh api "repos/$repo/actions/oidc/customization/sub" --jq '.sub_claim_prefix'
 $adminSubject   = "${subjectPrefix}:environment:admin"
 $vendingSubject = "${subjectPrefix}:environment:vending"
+# PR previews carry the ":pull_request" subject (no environment), so the read-only plan identity trusts exactly that.
+$prSubject      = "${subjectPrefix}:pull_request"
 
 # --- 2. Deploy the trust anchor (idempotent) --------------------------------
 Write-Host 'Deploying trust anchor...'
@@ -36,11 +38,13 @@ az deployment sub create `
   --template-file (Join-Path $repoRoot 'bootstrap-trust/main.bicep') `
   --parameters "adminOidcSubject=$adminSubject" `
   --parameters "vendingOidcSubject=$vendingSubject" `
+  --parameters "pullRequestOidcSubject=$prSubject" `
   --output none
 
 # --- 3. Read the outputs + account context (never printed) ------------------
 $adminClientId   = az deployment sub show --name $DeploymentName --query properties.outputs.adminIdentityClientId.value -o tsv
 $vendingClientId = az deployment sub show --name $DeploymentName --query properties.outputs.vendingIdentityClientId.value -o tsv
+$planClientId    = az deployment sub show --name $DeploymentName --query properties.outputs.planIdentityClientId.value -o tsv
 $stateSa         = az deployment sub show --name $DeploymentName --query properties.outputs.stateStorageAccountName.value -o tsv
 $tenantId        = az account show --query tenantId -o tsv
 $subId           = az account show --query id -o tsv
@@ -78,7 +82,10 @@ function Set-PlatformEnvironment {
 Set-PlatformEnvironment -Name 'admin'   -ClientId $adminClientId   -Branches @('dev')
 Set-PlatformEnvironment -Name 'vending' -ClientId $vendingClientId -Branches @('dev', 'main')
 
-# --- 6. Shared repo-level value ---------------------------------------------
+# --- 6. Shared repo-level values --------------------------------------------
 gh variable set STATE_STORAGE_ACCOUNT_NAME --body $stateSa -R $repo
+# PR-plan client id is a repo variable (not an environment): the pull_request job runs with NO environment,
+# so it reads this at repo scope. A client id is a non-secret identifier.
+gh variable set VENDING_PR_CLIENT_ID --body $planClientId -R $repo
 
 Write-Host 'Done: trust anchor deployed and GitHub (admin + vending) wired.'
