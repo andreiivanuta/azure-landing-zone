@@ -132,8 +132,10 @@ cluster, disks, IPs …). So offboarding has extra guardrails:
   a stray "delete the file" PR cannot tear down a live workload. To offboard on purpose, do it in **two
   steps**: (1) merge a PR setting `deletion_protection = false`, then (2) merge a PR deleting the file. A
   maintainer can also override once by running `vending-destroy` manually with `force = true`.
-- **Blast-radius pre-flight** *(when enabled)* — the destroy refuses if the resource group still contains
-  resources, i.e. the workload hasn't torn down its own infrastructure yet. Fail-safe: nothing is destroyed.
+- **Blast-radius pre-flight.** Before destroying, the workflow lists the resource group's live
+  contents and **refuses if it still contains resources** — i.e. the workload hasn't torn down its own
+  infrastructure yet (deleting the RG would recursively delete it). Fail-safe: nothing is destroyed.
+  The offboard preview shows the same live inventory so you see the blast radius before merging.
 - **Owner surfaced** — set `owner` in your file and it appears on the RG tag and in the destroy preview, so
   a reviewer knows who to contact first.
 

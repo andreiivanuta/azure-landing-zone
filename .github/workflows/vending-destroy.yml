@@ -126,11 +126,33 @@ jobs:
             exit 1
           fi
           echo "deletion-protection: protected=$protected force=${FORCE:-false} -> proceeding"
+
+      - name: Azure login (OIDC, vending write identity)
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Blast-radius pre-flight (refuse if the RG still holds resources)
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          f="vending/workloads/${{ matrix.workload }}.tfvars"
+          rg=$(sed -n 's/^[[:space:]]*resource_group_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1)
+          if [ -z "$rg" ]; then echo "::error::could not read resource_group_name from $f"; exit 1; fi
+          if ! az group show -n "$rg" -o none 2>/dev/null; then
+            echo "resource group '$rg' does not exist — nothing to protect, proceeding"
+          else
+            count=$(az resource list -g "$rg" --query "length(@)" -o tsv)
+            echo "resource group '$rg' contains ${count:-0} resource(s)"
+            if [ "${count:-0}" -gt 0 ] && [ "${FORCE:-false}" != "true" ]; then
+              echo "::error::RG '$rg' still contains ${count} resource(s) — these belong to the workload and would be RECURSIVELY DELETED with the RG. Have the workload tear down its own infrastructure first, or re-run this workflow manually with force = true."
+              az resource list -g "$rg" --query "[].{name:name,type:type,state:provisioningState}" -o table || true
+              exit 1
+            fi
+          fi
 
       - uses: hashicorp/setup-terraform@v3
         with:

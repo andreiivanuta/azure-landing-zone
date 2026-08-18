@@ -186,7 +186,7 @@ jobs:
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
-      - name: Read protection + owner metadata
+      - name: Read protection + owner + live RG inventory
         id: meta
         run: |
           f="vending/workloads/${{ matrix.workload }}.tfvars"
@@ -197,6 +197,16 @@ jobs:
           fi
           owner=$(sed -n 's/^[[:space:]]*owner[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1)
           echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          # Live blast-radius: what does the RG actually contain right now? (read-only PR identity has Reader)
+          rg=$(sed -n 's/^[[:space:]]*resource_group_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1)
+          if az group show -n "$rg" -o none 2>/dev/null; then
+            az resource list -g "$rg" --query "[].{name:name,type:type,state:provisioningState}" -o table > rg_inventory.txt 2>/dev/null || echo "(could not read resource group contents)" > rg_inventory.txt
+            count=$(az resource list -g "$rg" --query "length(@)" -o tsv 2>/dev/null || echo "?")
+          else
+            echo "(resource group $rg does not exist)" > rg_inventory.txt
+            count=0
+          fi
+          echo "rgcount=$count" >> "$GITHUB_OUTPUT"
 
       - name: Post offboard preview to the PR
         if: always()
@@ -206,19 +216,25 @@ jobs:
           MODE: destroy
           PROTECTED: ${{ steps.meta.outputs.protected }}
           OWNER: ${{ steps.meta.outputs.owner }}
+          RGCOUNT: ${{ steps.meta.outputs.rgcount }}
         with:
           script: |
             const fs = require('fs');
-            const { WORKLOAD, MODE, PROTECTED, OWNER } = process.env;
+            const { WORKLOAD, MODE, PROTECTED, OWNER, RGCOUNT } = process.env;
             let out = fs.readFileSync('plan.txt', 'utf8');
             const max = 60000;
             if (out.length > max) out = out.slice(0, max) + '\n... (truncated) ...';
+            let inv = '';
+            try { inv = fs.readFileSync('rg_inventory.txt', 'utf8'); } catch (e) { inv = '(inventory unavailable)'; }
             const marker = `<!-- vending-pr-plan:${MODE}:${WORKLOAD} -->`;
             const ownerLine = OWNER ? `\n> **Owner:** ${OWNER} — reach out before offboarding.` : '';
             const banner = PROTECTED === 'true'
               ? `> ⛔ **Deletion-protected.** Merging will **not** offboard this workload — the destroy workflow refuses until \`deletion_protection = false\` is set in a separate PR.${ownerLine}`
               : `> ⚠️ **Not protected.** Merging will re-plan and run \`terraform destroy\` for this workload.${ownerLine}`;
-            const body = `${marker}\n### Vending ${MODE} (offboard) — \`${WORKLOAD}\`\n\n${banner}\n\n<details><summary>terraform plan -destroy</summary>\n\n\`\`\`\n${out}\n\`\`\`\n\n</details>`;
+            const blast = (RGCOUNT && RGCOUNT !== '0')
+              ? `> 💥 **Blast radius:** the resource group still contains **${RGCOUNT}** resource(s) (below). Deleting the RG deletes these too — the destroy workflow will **refuse** unless forced.`
+              : `> ✅ **Blast radius:** the resource group is empty of workload resources.`;
+            const body = `${marker}\n### Vending ${MODE} (offboard) — \`${WORKLOAD}\`\n\n${banner}\n\n${blast}\n\n<details><summary>resource group contents</summary>\n\n\`\`\`\n${inv}\n\`\`\`\n\n</details>\n\n<details><summary>terraform plan -destroy</summary>\n\n\`\`\`\n${out}\n\`\`\`\n\n</details>`;
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
