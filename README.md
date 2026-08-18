@@ -48,10 +48,12 @@ workload = {
 **4. Merge** → your identities, GitHub OIDC federation, and least-privilege RBAC are created
 automatically (merge = deploy).
 
-**5. Wire your repo (manual today)** → create the `plan` / `apply` / `destroy` / `cleanup`
-environments in your workload repo and set `AZURE_CLIENT_ID` (from the apply run's output),
-`AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`; then authenticate with `azure/login`. Automating
-this handoff is a tracked next step.
+**5. Done — nothing to wire.** On merge, vending seeds your workload repo automatically with
+**repo-level variables** `AZURE_CLIENT_ID_PLAN` / `AZURE_CLIENT_ID_APPLY` / `AZURE_CLIENT_ID_DESTROY` /
+`AZURE_CLIENT_ID_CLEANUP` (non-secret client IDs), plus `AZURE_TENANT_ID` and
+`STATE_STORAGE_ACCOUNT_NAME`, and the `AZURE_SUBSCRIPTION_ID` secret. Your deploy workflow runs each
+job in the matching `environment:` and logs in with `${{ vars.AZURE_CLIENT_ID_<ENV> }}` (e.g. an
+`apply` job uses `AZURE_CLIENT_ID_APPLY`).
 
 To **offboard**, delete your file in a PR: the preview shows a `terraform plan -destroy`, and
 merging runs it.
