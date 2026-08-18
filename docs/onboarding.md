@@ -49,10 +49,28 @@ The registry drives three workflows automatically:
 - **`vending-pr-plan.yml`** — a pull request into `main` posts a read-only preview to the PR:
   `terraform plan` for added/changed workloads, `terraform plan -destroy` for deleted ones. It runs as
   a **read-only** identity, so an untrusted PR can preview but never change anything.
-- **`vending-apply.yml`** — merging a create/update change plans it and then applies the exact plan
-  **automatically** (merge = deploy). The pull request is the gate.
-- **`vending-destroy.yml`** — merging a deletion (offboard) plans the destroy and then destroys the exact
-  plan automatically.
+- **`vending-apply.yml`** — merging a create/update change re-plans it against current state and applies
+  **automatically** (merge = deploy). The pull request preview is the gate; because it re-plans, the apply
+  is safely re-runnable (and can be triggered manually to recover from a transient failure).
+- **`vending-destroy.yml`** — merging a deletion (offboard) re-plans the destroy and runs it automatically.
+
+### Operational notes & limitations
+
+Because apply/destroy **re-plan** (they don't replay a frozen plan), they are safely re-runnable:
+
+- **Recovery / manual re-run.** Both workflows have a **Run workflow** button (`workflow_dispatch`).
+  `vending-apply` with an empty input **reconciles all** current workloads; with a workload name it
+  re-applies + re-seeds just that one (use this to recover a half-seeded workload). `vending-destroy`
+  takes a workload name and an optional `ref` (a commit/branch that still contains the intake file).
+- **Rapid successive merges.** If several merges land while a run is in progress, GitHub keeps only the
+  latest queued run, so an intermediate push's workload can be skipped. Recover by dispatching
+  `vending-apply` with an empty input (reconcile all).
+- **Renames.** Renaming `workloads/<old>.tfvars` to `<new>.tfvars` onboards `<new>` but does **not**
+  offboard `<old>` (its state lives under the old key). Rename = offboard old + onboard new, in
+  separate PRs.
+- **Same-workload apply and destroy at once.** Adding and deleting the *same* workload in one change (or
+  manually dispatching both together) can race the GitHub-side seed vs un-seed. Terraform's state lock
+  still protects the Azure resources; just avoid doing both to one workload simultaneously.
 
 ## Part B — Onboarding a workload
 
@@ -98,9 +116,10 @@ That's it — the region defaults to the platform region, and the identities def
 Override any of these only if your workload genuinely differs — add an explicit `location` /
 `location_code`, or a full `identities = { ... }` block (the module's guardrails still apply).
 
-Opening the PR posts a read-only `terraform plan` **preview** for review (the gate). Merging then applies
-the exact plan automatically (merge = deploy) — no second approval to remember. To offboard later, delete
-your file in a PR: the preview shows a `terraform plan -destroy`, and merging runs the destroy.
+Opening the PR posts a read-only `terraform plan` **preview** for review (the gate). Merging then re-plans
+against current state and applies automatically (merge = deploy) — no second approval to remember, and the
+apply is safely re-runnable. To offboard later, delete your file in a PR: the preview shows a
+`terraform plan -destroy`, and merging runs the destroy.
 
 ### 4. What the guardrails allow
 

@@ -2,9 +2,9 @@
 # Runs as the low-trust PR identity (OIDC subject :pull_request) - it can make NO changes (no lock, read-only RBAC).
 #   added/changed vending/workloads/<name>.tfvars -> `terraform plan`          (create/update preview)
 #   deleted       vending/workloads/<name>.tfvars -> `terraform plan -destroy` (offboard preview)
-# Each preview is posted back to the PR for review AND the saved plan file is uploaded as an artifact
-# (keyed by workload + PR head SHA). On merge, vending-apply / vending-destroy download that exact artifact
-# and apply it - so what gets deployed is byte-for-byte the plan that was reviewed (Terraform refuses a stale plan).
+# Each preview is posted back to the PR as a comment for review (the gate). On merge, vending-apply /
+# vending-destroy RE-PLAN against current state and apply - so a re-run is always safe. This workflow only
+# previews; it uploads no plan artifact.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending PR plan
 
@@ -86,7 +86,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8" # pin so the saved plan can be applied by the merge-time workflow (exact-version match)
+          terraform_version: "1.9.8" # pin for reproducible previews (matches apply/destroy)
 
       - name: Terraform init (this workload's state key)
         run: >
@@ -100,20 +100,10 @@ jobs:
         id: plan
         run: |
           set +e
-          terraform -chdir=vending plan -input=false -lock=false -no-color -out=tf.plan \
+          terraform -chdir=vending plan -input=false -lock=false -no-color \
             -var="workload_name=${{ matrix.workload }}" \
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload the saved plan for the apply job
-        if: steps.plan.outputs.exitcode == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          # Keyed by workload + PR head SHA so the merge-time apply can find this exact reviewed plan.
-          name: tfplan-apply-${{ matrix.workload }}-${{ github.event.pull_request.head.sha }}
-          path: vending/tf.plan
-          retention-days: 30
-          if-no-files-found: error
 
       - name: Post preview to the PR
         if: always()
@@ -177,7 +167,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8" # pin so the saved plan can be applied by the merge-time workflow (exact-version match)
+          terraform_version: "1.9.8" # pin for reproducible previews (matches apply/destroy)
 
       - name: Terraform init (this workload's state key)
         run: >
@@ -191,20 +181,10 @@ jobs:
         id: plan
         run: |
           set +e
-          terraform -chdir=vending plan -destroy -input=false -lock=false -no-color -out=tf.plan \
+          terraform -chdir=vending plan -destroy -input=false -lock=false -no-color \
             -var="workload_name=${{ matrix.workload }}" \
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload the saved destroy plan for the destroy job
-        if: steps.plan.outputs.exitcode == '0'
-        uses: actions/upload-artifact@v4
-        with:
-          # Keyed by workload + PR head SHA so the merge-time destroy can find this exact reviewed plan.
-          name: tfplan-destroy-${{ matrix.workload }}-${{ github.event.pull_request.head.sha }}
-          path: vending/tf.plan
-          retention-days: 30
-          if-no-files-found: error
 
       - name: Post offboard preview to the PR
         if: always()
@@ -220,7 +200,7 @@ jobs:
             const max = 60000;
             if (out.length > max) out = out.slice(0, max) + '\n... (truncated) ...';
             const marker = `<!-- vending-pr-plan:${MODE}:${WORKLOAD} -->`;
-            const body = `${marker}\n### Vending ${MODE} (offboard) — \`${WORKLOAD}\`\n\n> This PR deletes the intake file, so merging will offboard this workload via the manual gate.\n\n<details><summary>terraform plan -destroy</summary>\n\n\`\`\`\n${out}\n\`\`\`\n\n</details>`;
+            const body = `${marker}\n### Vending ${MODE} (offboard) — \`${WORKLOAD}\`\n\n> This PR deletes the intake file, so merging will offboard this workload (a fresh destroy is re-planned and applied on merge).\n\n<details><summary>terraform plan -destroy</summary>\n\n\`\`\`\n${out}\n\`\`\`\n\n</details>`;
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });

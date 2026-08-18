@@ -1,11 +1,12 @@
-# Automated OFFBOARD flow. On merge that DELETES a workload intake file, DOWNLOAD the exact destroy plan that
-# was reviewed on the PR (uploaded by vending-pr-plan.yml) and apply it - so the offboard is byte-for-byte what
-# was approved. `terraform apply <planfile>` refuses a stale plan and fails safe if state moved. Not recomputed.
-# The deleted file no longer exists on main HEAD, so the apply job checks out github.event.before (main just
-# before this merge), where vending/workloads/<name>.tfvars still exists, to load the config.
-#   detect job  : which workloads were deleted + find the PR-plan run that produced the reviewed destroy plan.
-#   destroy job : download that plan, log in as the vending write identity, `terraform apply tf.plan`,
-#                then un-seed the workload repo (remove the environments created on onboard) with a repo-scoped GitHub App token.
+# Automated OFFBOARD flow (convergent). On merge that DELETES a workload intake file, RE-PLAN the destroy
+# against current state and apply it. The deleted file no longer exists on main HEAD, so we check out the
+# pre-merge commit (github.event.before), where vending/workloads/<name>.tfvars still exists, to load config.
+#
+# Because it re-plans, this is safely RE-RUNNABLE and can be triggered manually (workflow_dispatch) to tear
+# down a workload or recover a failed offboard without crafting a new PR. After destroy, it un-seeds the
+# workload repo (removes the login values it had seeded) via a repo-scoped GitHub App token.
+#   detect job  : which workloads to destroy (push deletions, or the workflow_dispatch input) + the ref to load config from.
+#   destroy job : capture seed coords, `terraform destroy` (fresh), then un-seed the repo.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending destroy (offboard)
 
@@ -14,70 +15,68 @@ on:
     branches: [main]
     paths:
       - "vending/workloads/**"
+  workflow_dispatch:
+    inputs:
+      workload:
+        description: "Workload to destroy + un-seed."
+        required: true
+      ref:
+        description: "Git ref/SHA that still contains the workload's intake file (defaults to the current branch)."
+        required: false
+        default: ""
 
 permissions:
   id-token: write # OIDC login to Azure
   contents: read # checkout
-  actions: read # download the artifact from the PR-plan run
-  pull-requests: read # correlate the merge commit to its PR
 
 concurrency:
   group: vending-destroy # serialize successive offboard runs; apply has its own group
   cancel-in-progress: false
 
 jobs:
-  # 1) Which workloads were deleted, and which PR-plan run holds their reviewed destroy plan?
+  # 1) Which workloads were deleted (push) or named (dispatch), and which ref still holds their config?
   detect:
     runs-on: ubuntu-latest
-    env:
-      GH_TOKEN: ${{ github.token }}
     outputs:
-      workloads: ${{ steps.diff.outputs.workloads }}
-      any: ${{ steps.diff.outputs.any }}
-      base: ${{ steps.diff.outputs.base }}
-      pr_head_sha: ${{ steps.correlate.outputs.pr_head_sha }}
-      plan_run_id: ${{ steps.correlate.outputs.plan_run_id }}
+      workloads: ${{ steps.pick.outputs.workloads }}
+      any: ${{ steps.pick.outputs.any }}
+      ref: ${{ steps.pick.outputs.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - id: diff
-        name: Detect deleted workloads
+      - id: pick
+        name: Select workloads + config ref
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ github.event.inputs.workload }}
+          INPUT_REF: ${{ github.event.inputs.ref }}
         run: |
-          base='${{ github.event.before }}'
-          head='${{ github.sha }}'
-          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
-            base=$(git rev-parse "$head^" 2>/dev/null || echo "$head")
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            names="$INPUT"
+            ref="${INPUT_REF:-${{ github.ref_name }}}"
+          else
+            base='${{ github.event.before }}'
+            head='${{ github.sha }}'
+            if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+              base=$(git rev-parse "$head^" 2>/dev/null || echo "$head")
+            fi
+            names=$(git diff --name-only --diff-filter=D "$base" "$head" -- 'vending/workloads/*.tfvars' \
+              | grep -v '\.example$' | sed -n 's#.*/\([^/]*\)\.tfvars#\1#p' | sort -u)
+            ref="$base"
           fi
-          deleted=$(git diff --name-only --diff-filter=D "$base" "$head" -- 'vending/workloads/*.tfvars' \
-            | grep -v '\.example$' | sed -n 's#.*/\([^/]*\)\.tfvars#\1#p' | sort -u)
-          if [ -n "$deleted" ]; then
-            json=$(printf '%s\n' "$deleted" | jq -R . | jq -cs .)
+          if [ -n "$names" ]; then
+            json=$(printf '%s\n' "$names" | jq -R . | jq -cs .)
             echo "any=true" >> "$GITHUB_OUTPUT"
           else
             json='[]'; echo "any=false" >> "$GITHUB_OUTPUT"
           fi
           echo "workloads=$json" >> "$GITHUB_OUTPUT"
-          echo "base=$base" >> "$GITHUB_OUTPUT"
-          echo "deleted: [$deleted]  base=$base"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "selected: [$names]  ref=$ref"
 
-      - id: correlate
-        name: Find the PR-plan run that produced the reviewed destroy plan
-        run: |
-          merge_sha='${{ github.sha }}'
-          pr_head=$(gh api "repos/${{ github.repository }}/commits/$merge_sha/pulls" \
-            -H "Accept: application/vnd.github+json" --jq '.[0].head.sha // empty')
-          run_id=""
-          if [ -n "$pr_head" ]; then
-            run_id=$(gh api "repos/${{ github.repository }}/actions/workflows/vending-pr-plan.yml/runs?head_sha=$pr_head&event=pull_request" \
-              --jq '[.workflow_runs[] | select(.conclusion=="success")] | .[0].id // empty')
-          fi
-          echo "pr_head_sha=$pr_head" >> "$GITHUB_OUTPUT"
-          echo "plan_run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "pr_head=$pr_head  plan_run_id=$run_id"
-
-  # 2) Apply the EXACT reviewed destroy plan, one workload per matrix leg.
+  # 2) Re-plan + destroy, one workload per matrix leg, then un-seed that workload's repo.
   destroy:
     needs: detect
     if: needs.detect.outputs.any == 'true'
@@ -95,24 +94,16 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
     steps:
-      - name: Ensure a reviewed plan exists
-        run: |
-          if [ -z "${{ needs.detect.outputs.plan_run_id }}" ]; then
-            echo "::error::No successful vending-pr-plan run found for this merge. Offboards must go through a PR so the reviewed destroy plan can be applied."
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.detect.outputs.base }} # pre-merge commit still has the deleted intake file (needed to load config)
+          ref: ${{ needs.detect.outputs.ref }} # a ref where the deleted intake file still exists
 
-      - name: Download the reviewed destroy plan (from the PR-plan run)
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan-destroy-${{ matrix.workload }}-${{ needs.detect.outputs.pr_head_sha }}
-          path: vending
-          run-id: ${{ needs.detect.outputs.plan_run_id }}
-          github-token: ${{ github.token }}
+      - name: Fail early if the intake file is missing
+        run: |
+          if [ ! -f "vending/workloads/${{ matrix.workload }}.tfvars" ]; then
+            echo "::error::vending/workloads/${{ matrix.workload }}.tfvars not found on ref '${{ needs.detect.outputs.ref }}'. Pass a ref that still contains it."
+            exit 1
+          fi
 
       - name: Azure login (OIDC, vending write identity)
         uses: azure/login@v2
@@ -123,7 +114,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8" # pin so the merge-time destroy matches the PR-time plan (saved plans need the exact version)
+          terraform_version: "1.9.8"
 
       - name: Terraform init (this workload's state key)
         run: >
@@ -133,22 +124,25 @@ jobs:
           -backend-config="container_name=tfstate"
           -backend-config="key=${{ matrix.workload }}.tfstate"
 
-      - name: Capture seed coordinates before destroy
+      - name: Derive workload repo slug from the intake file
         id: tf
         run: |
-          slug=$(terraform -chdir=vending output -raw workload_repo_slug 2>/dev/null || echo "")
+          f="vending/workloads/${{ matrix.workload }}.tfvars"
+          slug=$(sed -n 's/.*subject_prefix[[:space:]]*=[[:space:]]*"repo:\([^@]*\)@[0-9]*\/\([^@/]*\)@[0-9]*".*/\1\/\2/p' "$f" | head -n1)
           echo "slug=$slug"        >> "$GITHUB_OUTPUT"
           echo "owner=${slug%%/*}" >> "$GITHUB_OUTPUT"
           echo "repo=${slug##*/}"  >> "$GITHUB_OUTPUT"
-          terraform -chdir=vending output -json environment_client_ids > env_client_ids.json 2>/dev/null || echo '{}' > env_client_ids.json
           echo "workload repo: ${slug:-<none>}"
 
-      - name: Terraform apply (the exact reviewed destroy plan)
-        run: terraform -chdir=vending apply -input=false tf.plan
+      - name: Terraform destroy (fresh plan against current state)
+        run: |
+          terraform -chdir=vending destroy -input=false -auto-approve \
+            -var="workload_name=${{ matrix.workload }}" \
+            -var-file="workloads/${{ matrix.workload }}.tfvars"
 
       # --- Un-seed the workload repo: remove the repo-level login values (identities are now gone) ---
-      # Repo-level variables/secret only -> the App needs just Variables/Secrets (no Administration).
-      # We do NOT delete the workload's environments (we never created them; GitHub auto-creates them).
+      # Slug + variable names come from the intake file and a live listing (NOT Terraform state), so this
+      # step is idempotent and re-runnable even though `terraform destroy` has already cleared the state.
       - name: Mint a repo-scoped token for the workload repo
         id: apptoken
         if: steps.tf.outputs.slug != ''
@@ -166,9 +160,9 @@ jobs:
           SLUG: ${{ steps.tf.outputs.slug }}
         run: |
           set -euo pipefail
-          jq -r 'keys[]' env_client_ids.json | while IFS= read -r env; do
-            up="$(printf '%s' "$env" | tr '[:lower:]-' '[:upper:]_')"
-            gh variable delete "AZURE_CLIENT_ID_${up}" --repo "$SLUG" 2>/dev/null || echo "AZURE_CLIENT_ID_${up} already absent"
+          # Delete every per-environment client-id variable actually present (no dependence on TF state).
+          gh variable list --repo "$SLUG" | awk '{print $1}' | grep '^AZURE_CLIENT_ID_' | while IFS= read -r v; do
+            gh variable delete "$v" --repo "$SLUG" 2>/dev/null || echo "$v already absent"
           done
           gh variable delete AZURE_TENANT_ID            --repo "$SLUG" 2>/dev/null || echo "AZURE_TENANT_ID already absent"
           gh variable delete STATE_STORAGE_ACCOUNT_NAME --repo "$SLUG" 2>/dev/null || echo "STATE_STORAGE_ACCOUNT_NAME already absent"
