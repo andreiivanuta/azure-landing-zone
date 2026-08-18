@@ -1,0 +1,160 @@
+# Automated OFFBOARD flow: when a merge to main DELETES a workload intake file, plan its destroy (read-only),
+# PAUSE for a required reviewer on the `vending` environment, then destroy the EXACT saved plan.
+# The deleted file no longer exists on main HEAD, so both jobs check out the pre-merge commit (github.event.before),
+# where vending/workloads/<name>.tfvars still exists, to resolve the workload's variables.
+#   plan job    : read-only identity (OIDC :ref:refs/heads/main), no environment
+#   destroy job : vending identity, environment `vending` (required reviewer) -> in-run approval, then apply tf.plan
+# NOTE: pin actions to commit SHAs before treating any workflow as production.
+name: Vending destroy (offboard)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vending/workloads/**"
+
+permissions:
+  id-token: write # OIDC login to Azure
+  contents: read # checkout
+
+concurrency:
+  group: vending-destroy # serialize successive offboard runs; apply has its own group
+  cancel-in-progress: false
+
+jobs:
+  # 1) Which workload intake files were DELETED by this merge?
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      workloads: ${{ steps.diff.outputs.workloads }}
+      base: ${{ steps.diff.outputs.base }}
+      any: ${{ steps.diff.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        name: Detect deleted workloads
+        run: |
+          base='${{ github.event.before }}'
+          head='${{ github.sha }}'
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            base=$(git rev-parse "$head^" 2>/dev/null || echo "$head")
+          fi
+          deleted=$(git diff --name-only --diff-filter=D "$base" "$head" -- 'vending/workloads/*.tfvars' \
+            | grep -v '\.example$' | sed -n 's#.*/\([^/]*\)\.tfvars#\1#p' | sort -u)
+          if [ -n "$deleted" ]; then
+            json=$(printf '%s\n' "$deleted" | jq -R . | jq -cs .)
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            json='[]'; echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "workloads=$json" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "deleted: [$deleted]  base=$base"
+
+  # 2) Read-only destroy plan per deleted workload; print it for the reviewer and save it for the destroy job.
+  plan:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: ${{ fromJSON(needs.detect.outputs.workloads) }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.VENDING_PR_CLIENT_ID }} # read-only identity
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.detect.outputs.base }} # pre-merge commit still has the deleted intake file
+
+      - name: Azure login (OIDC, read-only identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.VENDING_PR_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (this workload's state key)
+        run: >
+          terraform -chdir=vending init -input=false
+          -backend-config="resource_group_name=rg-alz-management-swc"
+          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ matrix.workload }}.tfstate"
+
+      - name: Terraform plan -destroy (read-only, save to file)
+        run: |
+          terraform -chdir=vending plan -destroy -input=false -lock=false -out=tf.plan \
+            -var="workload_name=${{ matrix.workload }}" \
+            -var-file="workloads/${{ matrix.workload }}.tfvars"
+          {
+            echo "### Vending OFFBOARD plan — \`${{ matrix.workload }}\` (approve the destroy job to execute)"
+            echo '```'
+            terraform -chdir=vending show -no-color tf.plan
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload saved plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-destroy-${{ matrix.workload }}
+          path: vending/tf.plan
+          retention-days: 1
+          if-no-files-found: error
+
+  # 3) GATED destroy of the exact saved plan. environment `vending` pauses here for the required reviewer.
+  destroy:
+    needs: [detect, plan]
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    environment: vending # required reviewer -> in-run approval; OIDC subject :environment:vending on main
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        workload: ${{ fromJSON(needs.detect.outputs.workloads) }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }} # vending (write) identity from the environment
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.detect.outputs.base }} # match the config the destroy plan was built against
+
+      - name: Download the saved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-destroy-${{ matrix.workload }}
+          path: vending
+
+      - name: Azure login (OIDC, vending identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (same state key)
+        run: >
+          terraform -chdir=vending init -input=false
+          -backend-config="resource_group_name=rg-alz-management-swc"
+          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ matrix.workload }}.tfstate"
+
+      - name: Terraform apply (exact saved destroy plan)
+        run: terraform -chdir=vending apply -input=false tf.plan

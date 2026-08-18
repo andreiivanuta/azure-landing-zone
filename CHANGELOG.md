@@ -36,6 +36,24 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 - `bootstrap-trust/deploy.ps1` — one-step local bootstrap: deploys the Bicep trust anchor and seeds
   the GitHub values it produces (admin-environment `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` variables,
   `AZURE_SUBSCRIPTION_ID` secret, and the repo `STATE_STORAGE_ACCOUNT_NAME` variable). Idempotent; no IDs hardcoded.
+- **Read-only PR-plan identity** in the Bicep trust anchor: `id-alz-vending-pr-swc` with a custom
+  `Landing Zone Vendor Reader (alz)` role (read-only RG / UAMI / federated-credential / role-assignment /
+  role-definition / storage-account verbs at subscription scope) and Storage Blob Data Reader on the state
+  account. Two federated credentials on this one identity — `github-vending-pr` (subject `:pull_request`)
+  and `github-vending-main-plan` (subject `:ref:refs/heads/main`) — so untrusted pull-request previews and
+  the merge-time plan both run read-only. `deploy.ps1` seeds the repo variable `VENDING_PR_CLIENT_ID` and
+  publishes `AZURE_TENANT_ID` (variable) + `AZURE_SUBSCRIPTION_ID` (secret) at repo scope for the
+  environment-less plan jobs.
+- **Automated vending lifecycle** (three workflows) replacing the manual v1 pipeline:
+  - `.github/workflows/vending-pr-plan.yml` — on a pull request into `main`, a read-only preview posted
+    back to the PR: `terraform plan` for added/changed `vending/workloads/*.tfvars`, `terraform plan -destroy`
+    for deleted ones. Runs as the read-only PR identity; fork PRs are excluded.
+  - `.github/workflows/vending-apply.yml` — on merge to `main`, plan the changed workloads read-only, then
+    **pause on the `vending` environment's required reviewer** and apply the exact saved plan (create/update).
+  - `.github/workflows/vending-destroy.yml` — on merge that deletes a workload's intake file, plan its
+    destroy (checking out the pre-merge commit), pause for approval, then destroy the exact saved plan (offboard).
+- The repository was made **public** to unlock GitHub's native environment **required reviewers**, giving a
+  true in-run approval pause between plan and apply/destroy (its no-secrets OIDC design keeps this safe).
 
 ### Changed
 
@@ -104,3 +122,10 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
   via `TF_VAR_state_storage_account_name` in the job `env` (sourced from the `STATE_STORAGE_ACCOUNT_NAME`
   repo variable). The `plan` step previously passed it only to `-backend-config`, so `terraform plan
   -input=false` would have failed with "No value for required variable".
+
+### Removed
+
+- `.github/workflows/vending.yml` — the manual `workflow_dispatch` plan/apply/destroy pipeline, superseded
+  by the automated PR-preview + gated apply/destroy lifecycle above. (Retained in git history for break-glass.)
+- `.github/workflows/oidc-smoke-test.yml` — the one-off OIDC (OpenID Connect) + state-backend diagnostic;
+  its checks were verified end-to-end and are now exercised by the vending workflows themselves.
