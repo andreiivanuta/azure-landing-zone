@@ -1,8 +1,8 @@
 # azure-landing-zone
 
-A learning-lab **platform landing zone**: the private repository that establishes Azure
+A learning-lab **platform landing zone**: the repository that establishes Azure
 trust and **vends** governed access to workload repositories, so those workloads can deploy
-through GitHub Actions using OIDC — with no client secrets.
+through GitHub Actions using OIDC (OpenID Connect) — with no client secrets.
 
 This repository does **not** deploy any workload. The first workload (an ephemeral AKS
 cluster) lives in a separate repository (`terraform-aks-sandbox`) and only *consumes* what
@@ -12,35 +12,38 @@ this platform provides.
 
 - **Trust anchor** — the first Azure identity + resource groups, so GitHub Actions can authenticate.
 - **Shared state backend** — one Entra-ID-only storage account holding every workload's Terraform state.
-- **Workload identity vending** — a guardrailed module that mints a workload's CI identities,
-  their GitHub OIDC federation, and least-privilege RBAC.
+- **Workload identity vending** — a guardrailed module that mints a workload's CI (Continuous
+  Integration) identities, their GitHub OIDC federation, and least-privilege RBAC (Role-Based
+  Access Control).
 
 ## Layout
 
 ```text
-bootstrap-trust/         Bicep trust anchor — run ONCE, locally, by a trusted user
-management/              Terraform — the shared state storage (workload-agnostic)
+bootstrap-trust/         Bicep trust anchor + shared state storage — run ONCE, locally
 modules/
   workload-identity/     Terraform module — vends one workload's identities (guardrailed)
 vending/                 Terraform — consumes the module to vend each declared workload
+  workloads/             one <name>.tfvars per workload (the registry)
+.github/workflows/       vending PR-plan / apply / destroy (GitHub Actions)
 config/project.json      shared naming (platform prefix, region)
-docs/                    implementation plan + security model
+docs/                    onboarding guide, implementation plan, security model
 ```
 
 ## Operating model
 
 One manual step, then everything through GitHub Actions:
 
-1. **Local, once (you):** deploy the Bicep trust anchor → creates the first identity + resource
-   groups. This is the only manual step, because an empty repo has no Azure identity yet.
-2. **GitHub Actions (this repo):** `management/` creates the state storage; `vending/` mints each
-   workload's identities through the module.
+1. **Local, once (you):** deploy the Bicep trust anchor → creates the platform identities, resource
+   groups, and the shared Terraform state storage. This is the only manual step, because an empty
+   repo has no Azure identity yet.
+2. **GitHub Actions (this repo):** a PR (Pull Request) adding/editing a `vending/workloads/<name>.tfvars`
+   posts a read-only plan; merging vends that workload's identities through the module (merge = deploy).
 3. **GitHub Actions (workload repo):** the workload deploys itself using the vended identities and
    the shared state backend.
 
 **To operate this repo or onboard a workload, start with the [Operating & Onboarding Guide](docs/onboarding.md)** —
-it walks through running `management/` and `vending/`, and how a workload team gets its OIDC subject,
-submits a declaration, and receives its identities.
+it walks through the trust anchor and the vending workflows, and how a workload team gets its OIDC
+subject, submits a declaration, and receives its identities.
 
 ## Guardrails
 
