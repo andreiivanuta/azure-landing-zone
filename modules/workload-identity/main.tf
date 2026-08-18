@@ -50,3 +50,14 @@ resource "azurerm_role_assignment" "state" {
   principal_id         = azurerm_user_assigned_identity.this[each.key].principal_id
   principal_type       = "ServicePrincipal"
 }
+
+# Read-only Reader for the platform pipeline identities on the workload RG, so the vending pipeline can
+# enumerate the RG's live contents (destroy blast-radius safety check + offboard preview). Read-only.
+resource "azurerm_role_assignment" "platform_reader" {
+  for_each = toset(var.platform_reader_principal_ids)
+
+  scope                = var.workload_resource_group_id
+  role_definition_name = "Reader"
+  principal_id         = each.value
+  principal_type       = "ServicePrincipal"
+}

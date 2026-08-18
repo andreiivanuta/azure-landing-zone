@@ -17,6 +17,16 @@ workload = {
 #   location      = "swedencentral"
 #   location_code = "swc"
 #
+# Deletion protection (default ON). A protected workload cannot be offboarded by just
+# deleting this file — the destroy workflow refuses until this is set to false in a PR
+# (or a maintainer re-runs vending-destroy manually with force = true). Set to false
+# only for throwaway/sandbox workloads you are comfortable tearing down freely:
+#   deletion_protection = false
+#
+# Owner (optional) — surfaced on the resource group tag and in destroy previews, so a
+# reviewer knows who to contact before offboarding:
+#   owner = "team-or-user@example.com"
+#
 # Identities — default archetype (override only if you need something different):
 #   plan    -> Reader      + Storage Blob Data Reader      , environments ["plan"]
 #   deploy  -> Contributor + Storage Blob Data Contributor , environments ["apply","destroy"]

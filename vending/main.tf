@@ -20,11 +20,28 @@ data "azurerm_storage_account" "state" {
   resource_group_name = local.management_resource_group_name
 }
 
+# Platform pipeline identities (created by the Bicep trust anchor, deterministic names in the management RG).
+# They receive read-only Reader on each workload RG so the pipeline can enumerate live contents for the
+# destroy blast-radius check and the offboard preview. Looked up here to avoid plumbing principal IDs.
+data "azurerm_user_assigned_identity" "vending" {
+  name                = "id-${local.platform_prefix}-vending-${local.platform_location_code}"
+  resource_group_name = local.management_resource_group_name
+}
+
+data "azurerm_user_assigned_identity" "vending_pr" {
+  name                = "id-${local.platform_prefix}-vending-pr-${local.platform_location_code}"
+  resource_group_name = local.management_resource_group_name
+}
+
 # The workload's own resource group — created (and destroyed) by vending, so onboarding needs no manual step.
 resource "azurerm_resource_group" "workload" {
   name     = var.workload.resource_group_name
   location = local.workload_location
-  tags     = merge(var.tags, { workload = var.workload_name })
+  tags = merge(
+    var.tags,
+    { workload = var.workload_name },
+    var.workload.owner != null ? { owner = var.workload.owner } : {},
+  )
 }
 
 # Vend this one workload's identities through the guardrailed module.
@@ -39,5 +56,9 @@ module "workload" {
   state_storage_account_id     = data.azurerm_storage_account.state.id
   subject_prefix               = var.workload.subject_prefix
   identities                   = var.workload.identities
-  tags                         = var.tags
+  platform_reader_principal_ids = [
+    data.azurerm_user_assigned_identity.vending.principal_id,
+    data.azurerm_user_assigned_identity.vending_pr.principal_id,
+  ]
+  tags = var.tags
 }

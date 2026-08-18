@@ -98,3 +98,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "platform_reader_principal_ids" {
+  description = "Principal (object) IDs of platform identities (the vending write + PR-plan read identities) that receive read-only Reader on the workload RG, so the pipeline can enumerate the RG's live contents for the destroy blast-radius check and the offboard preview. Defaults to none."
+  type        = list(string)
+  default     = []
+}
