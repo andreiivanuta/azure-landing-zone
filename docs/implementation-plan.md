@@ -45,9 +45,9 @@ Last reviewed: 2026-08-17
 - [x] OIDC + state-backend smoke test workflow (`.github/workflows/oidc-smoke-test.yml`) verified end-to-end as the `admin` identity.
 - [x] Guardrailed Terraform module `modules/workload-identity/` and single-workload `vending/` root implemented, targeting the identity RG; workload RG is now owned by vending itself (created and destroyed with the workload).
 - [x] Per-workload registry `vending/workloads/<name>.tfvars` established (committed via `.gitignore` exception; example: `taks.tfvars.example`).
-- [x] Vending workflows: `.github/workflows/vending-pr-plan.yml` (read-only PR preview — plan for added/changed, `plan -destroy` for deleted), `vending-apply.yml` (create/update on merge), and `vending-destroy.yml` (offboard on merge). Apply/destroy run under the `vending` environment; a changed-workload matrix fans out per registry file.
+- [x] Vending workflows: `.github/workflows/vending-pr-plan.yml` (read-only PR preview — plan for added/changed, `plan -destroy` for deleted), `vending-apply.yml` (re-plan + apply on merge), and `vending-destroy.yml` (re-plan + destroy on merge). Apply/destroy run under the `vending` environment, fan out per registry file, are **re-runnable** (a fresh re-plan each run, not a saved plan) and manually triggerable via `workflow_dispatch`, and seed the workload repo's login values via a repo-scoped GitHub App token.
 - [x] Default-branch protection on `main`: require a pull request before merging (0 approvals, solo-friendly); the PR review + read-only plan preview is the gate (merge = deploy).
-- [ ] Workload repo seeding (client IDs into workload environments) — done as part of each workload's vending apply once the workflow matures.
+- [x] Workload repo seeding: on vend, `vending-apply` seeds the workload repository automatically with **repo-level** variables `AZURE_CLIENT_ID_<ENV>` (+ tenant, subscription, state account), via a least-privilege GitHub App (repo-scoped installation token). See Phase 6.
 
 ## Fixed decisions
 
@@ -448,9 +448,9 @@ Exit criteria:
 - [x] Grant only `contents: read` and `id-token: write` on that workflow.
 - [x] Verify OIDC + state backend via `oidc-smoke-test.yml` (runs under `admin`).
 - [ ] Pin every GitHub Action to a full commit SHA with a same-line release comment.
-- [ ] Prevent state and plan artifact upload (explicit `--input=false`, no artifact steps).
+- [x] Prevent state and plan artifact upload (explicit `--input=false`, no artifact steps — the convergent design re-plans on merge and carries no plan artifact).
 - [ ] Add workflow concurrency per workload.
-- [ ] Expand to PR-plan / merge-apply + a changed-workload matrix (v2).
+- [x] Expand to PR-plan / merge-apply + a changed-workload matrix (v2).
 
 Exit criteria:
 
@@ -458,10 +458,10 @@ Exit criteria:
 
 ### Phase 6: Seed the workload repository (contract handover)
 
-- [ ] Publish the platform contract as Terraform outputs: state backend names, workload identity client IDs, workload RG name, and region.
-- [ ] Create the workload repository's `aks-plan`, `aks-apply`, `aks-destroy`, and `ttl-cleanup` environments.
-- [ ] Seed each environment's variables from the outputs; store no secret beyond the subscription identifier.
-- [ ] Document the interface so the workload team consumes it without tribal knowledge (already in `docs/onboarding.md`).
+- [x] Publish the platform contract as Terraform outputs: `workload_identity_client_ids`, `environment_client_ids` (environment → client ID), and `workload_repo_slug`.
+- [x] Seed the workload repository automatically on vend, via a least-privilege GitHub App (repo-scoped installation token): **repo-level** variables `AZURE_CLIENT_ID_<ENV>` (`plan` / `apply` / `destroy` / `cleanup`), `AZURE_TENANT_ID`, and `STATE_STORAGE_ACCOUNT_NAME`, plus the `AZURE_SUBSCRIPTION_ID` secret. The platform does **not** create the workload's environments (that would need the App `Administration` permission); GitHub auto-creates each environment when the workload's own job references `environment: <env>`. The non-secret client-id-per-environment mapping preserves identity separation; the OIDC subject `:environment:<env>` remains the gate.
+- [x] `vending-destroy` un-seeds those values on offboard (derived from the intake file + a live variable listing, so it is state-independent and re-runnable).
+- [x] Document the interface so the workload team consumes it without tribal knowledge (`docs/onboarding.md`).
 
 Exit criteria:
 
