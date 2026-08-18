@@ -114,15 +114,25 @@ The module rejects, at plan time, anything outside policy:
 
 ### 5. What you receive
 
-After vending, the platform seeds your repository's environments with:
+Vending mints your identities and **emits their client IDs as a Terraform output**
+(`workload_identity_client_ids`, keyed by role), visible in the apply run's log. Today, putting
+those into your workload repository is a **manual step** — automated seeding is planned (see the
+open *Workload repo seeding* item in [implementation-plan.md](implementation-plan.md)). Read the
+client IDs from the apply run, then set them per environment (`plan` / `apply` / `destroy` /
+`cleanup`):
 
-- `AZURE_CLIENT_ID` — a **variable**, per environment, holding the client ID of the identity
-  federated to that environment (plan / deploy / cleanup differ);
+- `AZURE_CLIENT_ID` — a **variable** holding the client ID of the identity federated to that
+  environment (the roles differ);
 - `AZURE_TENANT_ID` — a **variable**;
 - `AZURE_SUBSCRIPTION_ID` — a **secret**.
 
-You also receive your **state backend** coordinates (storage account and container) so your
-Terraform can use it — each workload under its own state key.
+```powershell
+# e.g. set the deploy identity's client ID in your workload repo's `apply` environment
+gh variable set AZURE_CLIENT_ID --env apply --repo <owner>/<repo> --body <client-id-from-output>
+```
+
+You also use the shared **state backend** (storage account + `tfstate` container) so your
+Terraform can store state — each workload under its own state key.
 
 ### 6. Use them in your workflow
 
@@ -143,7 +153,7 @@ only the access the guardrails allowed.
 ```text
 declaration (PR)  ->  preview + review + guardrails  ->  merge -> gated apply  ->  identities + federation + RBAC
                                                                         |
-                        seed env vars/secret into the workload repo  <--+
+                    set env vars/secret in the workload repo (manual today)  <--+
                                                                         |
 workload's apply job  ->  OIDC token  ->  matches the vended credential  ->  logs in  ->  deploys (fenced)
 ```
