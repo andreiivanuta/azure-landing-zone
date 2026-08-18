@@ -1,32 +1,33 @@
 # Per-workload intake — ONE file per workload (the committed registry).
 # The pipeline applies this file with its own state key:
-#   terraform init  -backend-config="key=<name>.tfstate"
 #   terraform apply -var="workload_name=<name>" -var-file="workloads/<name>.tfvars"
-# The module's guardrails (modules/workload-identity) reject anything outside policy.
 #
-# Copy to workloads/taks.tfvars, fill in the real repo owner/ids, and commit it.
+# MINIMAL FORM — only the two facts the platform can't know for you are required.
+# Region defaults to the platform region, and identities default to the standard
+# plan/deploy/cleanup archetype (see the overrides below).
 
 workload = {
   subject_prefix      = "repo:OWNER@OWNER_ID/terraform-aks-sandbox@REPO_ID"
   resource_group_name = "rg-taks-sandbox-swc"
-  location            = "swedencentral"
-  location_code       = "swc"
-
-  identities = {
-    plan = {
-      resource_group_role = "Reader"
-      state_role          = "Storage Blob Data Reader"
-      environments        = ["aks-plan"]
-    }
-    deploy = {
-      resource_group_role = "Contributor"
-      state_role          = "Storage Blob Data Contributor"
-      environments        = ["aks-apply", "aks-destroy"]
-    }
-    cleanup = {
-      resource_group_role = "Contributor"
-      state_role          = "Storage Blob Data Contributor"
-      environments        = ["ttl-cleanup"]
-    }
-  }
 }
+
+# --- Optional overrides (delete if you just want the defaults) -----------------
+#
+# Region — defaults to the platform region from config/project.json:
+#   location      = "swedencentral"
+#   location_code = "swc"
+#
+# Identities — default archetype (override only if you need something different):
+#   plan    -> Reader      + Storage Blob Data Reader      , environments ["plan"]
+#   deploy  -> Contributor + Storage Blob Data Contributor , environments ["apply","destroy"]
+#   cleanup -> Contributor + Storage Blob Data Contributor , environments ["cleanup"]
+#
+# The module's guardrails reject anything outside policy: control-plane role must be
+# Reader/Contributor, state role must be a Storage Blob Data Reader/Contributor, no
+# wildcards in the subject, and every identity needs at least one environment.
+#
+#   identities = {
+#     plan    = { resource_group_role = "Reader",      state_role = "Storage Blob Data Reader",      environments = ["plan"] }
+#     deploy  = { resource_group_role = "Contributor", state_role = "Storage Blob Data Contributor", environments = ["apply", "destroy"] }
+#     cleanup = { resource_group_role = "Contributor", state_role = "Storage Blob Data Contributor", environments = ["cleanup"] }
+#   }
