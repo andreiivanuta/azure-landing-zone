@@ -1,9 +1,9 @@
-# Automated CREATE/UPDATE flow: when a merge to main adds or changes a workload intake file,
-# plan it (read-only) then apply the EXACT saved plan - automatically (merge = deploy; the PR is the gate).
-#   plan job    : read-only identity (OIDC :ref:refs/heads/main), no environment -> cannot change anything
-#   apply job   : vending identity, environment `vending` -> supplies the write OIDC subject; applies tf.plan
-# The gate is the pull request (branch protection + the plan preview posted on the PR). The `vending`
-# environment carries no required reviewer, so apply runs on merge with no second approval to forget.
+# Automated CREATE/UPDATE flow. On merge to main, DOWNLOAD the exact plan that was reviewed on the PR
+# (uploaded as an artifact by vending-pr-plan.yml) and apply it. So what deploys is byte-for-byte what was
+# approved. If the state moved since the plan was saved, `terraform apply <planfile>` refuses (stale plan) and
+# fails safe - forcing a fresh PR/review. The plan is NOT recomputed here.
+#   detect job : which workloads changed + find the PR-plan run that produced the reviewed plan.
+#   apply job  : download that plan, log in as the vending write identity, and `terraform apply tf.plan`.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending apply (create/update)
 
@@ -16,18 +16,24 @@ on:
 permissions:
   id-token: write # OIDC login to Azure
   contents: read # checkout
+  actions: read # download the artifact from the PR-plan run
+  pull-requests: read # correlate the merge commit to its PR
 
 concurrency:
   group: vending-apply # serialize successive create/update runs; destroy has its own group
   cancel-in-progress: false
 
 jobs:
-  # 1) Which workload intake files were added or changed by this merge?
+  # 1) Which workloads were added/changed, and which PR-plan run holds their reviewed plan?
   detect:
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
     outputs:
       workloads: ${{ steps.diff.outputs.workloads }}
       any: ${{ steps.diff.outputs.any }}
+      pr_head_sha: ${{ steps.correlate.outputs.pr_head_sha }}
+      plan_run_id: ${{ steps.correlate.outputs.plan_run_id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -52,64 +58,25 @@ jobs:
           echo "workloads=$json" >> "$GITHUB_OUTPUT"
           echo "added/changed: [$changed]"
 
-  # 2) Read-only plan per workload; print it for the reviewer and save it for the apply job.
-  plan:
-    needs: detect
-    if: needs.detect.outputs.any == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        workload: ${{ fromJSON(needs.detect.outputs.workloads) }}
-    env:
-      ARM_USE_OIDC: "true"
-      ARM_CLIENT_ID: ${{ vars.VENDING_PR_CLIENT_ID }} # read-only identity
-      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Azure login (OIDC, read-only identity)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ vars.VENDING_PR_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - uses: hashicorp/setup-terraform@v3
-
-      - name: Terraform init (this workload's state key)
-        run: >
-          terraform -chdir=vending init -input=false
-          -backend-config="resource_group_name=rg-alz-management-swc"
-          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
-          -backend-config="container_name=tfstate"
-          -backend-config="key=${{ matrix.workload }}.tfstate"
-
-      - name: Terraform plan (read-only, save to file)
+      - id: correlate
+        name: Find the PR-plan run that produced the reviewed plan
         run: |
-          terraform -chdir=vending plan -input=false -lock=false -out=tf.plan \
-            -var="workload_name=${{ matrix.workload }}" \
-            -var-file="workloads/${{ matrix.workload }}.tfvars"
-          {
-            echo "### Vending apply plan — \`${{ matrix.workload }}\` (applied automatically on merge)"
-            echo '```'
-            terraform -chdir=vending show -no-color tf.plan
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          merge_sha='${{ github.sha }}'
+          # The merge commit is associated with its pull request; get that PR's head SHA (what PR-plan ran on).
+          pr_head=$(gh api "repos/${{ github.repository }}/commits/$merge_sha/pulls" \
+            -H "Accept: application/vnd.github+json" --jq '.[0].head.sha // empty')
+          run_id=""
+          if [ -n "$pr_head" ]; then
+            run_id=$(gh api "repos/${{ github.repository }}/actions/workflows/vending-pr-plan.yml/runs?head_sha=$pr_head&event=pull_request" \
+              --jq '[.workflow_runs[] | select(.conclusion=="success")] | .[0].id // empty')
+          fi
+          echo "pr_head_sha=$pr_head" >> "$GITHUB_OUTPUT"
+          echo "plan_run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "pr_head=$pr_head  plan_run_id=$run_id"
 
-      - name: Upload saved plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan-apply-${{ matrix.workload }}
-          path: vending/tf.plan
-          retention-days: 1
-          if-no-files-found: error
-
-  # 3) Apply the exact saved plan. environment `vending` supplies the write OIDC subject (no required reviewer).
+  # 2) Apply the EXACT reviewed plan, one workload per matrix leg.
   apply:
-    needs: [detect, plan]
+    needs: detect
     if: needs.detect.outputs.any == 'true'
     runs-on: ubuntu-latest
     environment: vending # supplies the vending write identity's OIDC subject :environment:vending on main
@@ -125,15 +92,24 @@ jobs:
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
     steps:
+      - name: Ensure a reviewed plan exists
+        run: |
+          if [ -z "${{ needs.detect.outputs.plan_run_id }}" ]; then
+            echo "::error::No successful vending-pr-plan run found for this merge. Workload changes must go through a PR so the reviewed plan can be applied."
+            exit 1
+          fi
+
       - uses: actions/checkout@v4
 
-      - name: Download the saved plan
+      - name: Download the reviewed plan (from the PR-plan run)
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-apply-${{ matrix.workload }}
+          name: tfplan-apply-${{ matrix.workload }}-${{ needs.detect.outputs.pr_head_sha }}
           path: vending
+          run-id: ${{ needs.detect.outputs.plan_run_id }}
+          github-token: ${{ github.token }}
 
-      - name: Azure login (OIDC, vending identity)
+      - name: Azure login (OIDC, vending write identity)
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
@@ -141,8 +117,10 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8" # pin so the merge-time apply matches the PR-time plan (saved plans need the exact version)
 
-      - name: Terraform init (same state key)
+      - name: Terraform init (this workload's state key)
         run: >
           terraform -chdir=vending init -input=false
           -backend-config="resource_group_name=rg-alz-management-swc"
@@ -150,5 +128,5 @@ jobs:
           -backend-config="container_name=tfstate"
           -backend-config="key=${{ matrix.workload }}.tfstate"
 
-      - name: Terraform apply (exact saved plan)
+      - name: Terraform apply (the exact reviewed plan)
         run: terraform -chdir=vending apply -input=false tf.plan

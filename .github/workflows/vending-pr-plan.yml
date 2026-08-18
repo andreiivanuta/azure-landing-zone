@@ -2,8 +2,10 @@
 # Runs as the low-trust PR identity (OIDC subject :pull_request) - it can make NO changes (no lock, read-only RBAC).
 #   added/changed vending/workloads/<name>.tfvars -> `terraform plan`          (create/update preview)
 #   deleted       vending/workloads/<name>.tfvars -> `terraform plan -destroy` (offboard preview)
-# Each preview is posted back to the PR for review. The actual apply/destroy is the manual, gated vending.yml
-# after the PR is reviewed and merged. NOTE: pin actions to commit SHAs before treating any workflow as production.
+# Each preview is posted back to the PR for review AND the saved plan file is uploaded as an artifact
+# (keyed by workload + PR head SHA). On merge, vending-apply / vending-destroy download that exact artifact
+# and apply it - so what gets deployed is byte-for-byte the plan that was reviewed (Terraform refuses a stale plan).
+# NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending PR plan
 
 on:
@@ -83,6 +85,8 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8" # pin so the saved plan can be applied by the merge-time workflow (exact-version match)
 
       - name: Terraform init (this workload's state key)
         run: >
@@ -96,10 +100,20 @@ jobs:
         id: plan
         run: |
           set +e
-          terraform -chdir=vending plan -input=false -lock=false -no-color \
+          terraform -chdir=vending plan -input=false -lock=false -no-color -out=tf.plan \
             -var="workload_name=${{ matrix.workload }}" \
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the saved plan for the apply job
+        if: steps.plan.outputs.exitcode == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          # Keyed by workload + PR head SHA so the merge-time apply can find this exact reviewed plan.
+          name: tfplan-apply-${{ matrix.workload }}-${{ github.event.pull_request.head.sha }}
+          path: vending/tf.plan
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Post preview to the PR
         if: always()
@@ -162,6 +176,8 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8" # pin so the saved plan can be applied by the merge-time workflow (exact-version match)
 
       - name: Terraform init (this workload's state key)
         run: >
@@ -175,10 +191,20 @@ jobs:
         id: plan
         run: |
           set +e
-          terraform -chdir=vending plan -destroy -input=false -lock=false -no-color \
+          terraform -chdir=vending plan -destroy -input=false -lock=false -no-color -out=tf.plan \
             -var="workload_name=${{ matrix.workload }}" \
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the saved destroy plan for the destroy job
+        if: steps.plan.outputs.exitcode == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          # Keyed by workload + PR head SHA so the merge-time destroy can find this exact reviewed plan.
+          name: tfplan-destroy-${{ matrix.workload }}-${{ github.event.pull_request.head.sha }}
+          path: vending/tf.plan
+          retention-days: 30
+          if-no-files-found: error
 
       - name: Post offboard preview to the PR
         if: always()
