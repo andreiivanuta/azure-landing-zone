@@ -1,9 +1,10 @@
-# Automated OFFBOARD flow: when a merge to main DELETES a workload intake file, plan its destroy (read-only),
-# PAUSE for a required reviewer on the `vending` environment, then destroy the EXACT saved plan.
+# Automated OFFBOARD flow: when a merge to main DELETES a workload intake file, plan its destroy (read-only)
+# then destroy the EXACT saved plan - automatically (merge = deploy; the PR is the gate).
 # The deleted file no longer exists on main HEAD, so both jobs check out the pre-merge commit (github.event.before),
 # where vending/workloads/<name>.tfvars still exists, to resolve the workload's variables.
 #   plan job    : read-only identity (OIDC :ref:refs/heads/main), no environment
-#   destroy job : vending identity, environment `vending` (required reviewer) -> in-run approval, then apply tf.plan
+#   destroy job : vending identity, environment `vending` -> supplies the write OIDC subject; applies tf.plan
+# The gate is the pull request; the `vending` environment carries no required reviewer, so destroy runs on merge.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending destroy (offboard)
 
@@ -97,7 +98,7 @@ jobs:
             -var="workload_name=${{ matrix.workload }}" \
             -var-file="workloads/${{ matrix.workload }}.tfvars"
           {
-            echo "### Vending OFFBOARD plan — \`${{ matrix.workload }}\` (approve the destroy job to execute)"
+            echo "### Vending OFFBOARD plan — \`${{ matrix.workload }}\` (applied automatically on merge)"
             echo '```'
             terraform -chdir=vending show -no-color tf.plan
             echo '```'
@@ -111,12 +112,12 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # 3) GATED destroy of the exact saved plan. environment `vending` pauses here for the required reviewer.
+  # 3) Destroy the exact saved plan. environment `vending` supplies the write OIDC subject (no required reviewer).
   destroy:
     needs: [detect, plan]
     if: needs.detect.outputs.any == 'true'
     runs-on: ubuntu-latest
-    environment: vending # required reviewer -> in-run approval; OIDC subject :environment:vending on main
+    environment: vending # supplies the vending write identity's OIDC subject :environment:vending on main
     strategy:
       fail-fast: false
       max-parallel: 1

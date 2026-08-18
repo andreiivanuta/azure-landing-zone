@@ -9,6 +9,8 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 ## [Unreleased]
 
 ### Added
+- **Branch protection on `main`**: require a pull request before merging (no direct pushes), so every
+  workload change flows through the read-only plan preview. Solo-friendly (0 required approvals).
 - Baseline commit of the platform (landing zone) foundation:
   - Repository hygiene: `.editorconfig`, `.gitattributes`, `.gitignore`.
   - `SECURITY.md` — vulnerability reporting and credential-exposure response policy.
@@ -49,11 +51,13 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
     back to the PR: `terraform plan` for added/changed `vending/workloads/*.tfvars`, `terraform plan -destroy`
     for deleted ones. Runs as the read-only PR identity; fork PRs are excluded.
   - `.github/workflows/vending-apply.yml` — on merge to `main`, plan the changed workloads read-only, then
-    **pause on the `vending` environment's required reviewer** and apply the exact saved plan (create/update).
+    apply the exact saved plan automatically (create/update). The pull request is the gate (merge = deploy).
   - `.github/workflows/vending-destroy.yml` — on merge that deletes a workload's intake file, plan its
-    destroy (checking out the pre-merge commit), pause for approval, then destroy the exact saved plan (offboard).
-- The repository was made **public** to unlock GitHub's native environment **required reviewers**, giving a
-  true in-run approval pause between plan and apply/destroy (its no-secrets OIDC design keeps this safe).
+    destroy (checking out the pre-merge commit), then destroy the exact saved plan automatically (offboard).
+- The repository was made **public** so branch protection and workflows are unrestricted; the gate is the
+  pull request review + read-only plan preview (its no-secrets OIDC design keeps this safe). The `vending`
+  environment supplies the write identity's OIDC subject but carries no required reviewer, so a merge deploys
+  without a separate, forgettable approval step.
 
 ### Changed
 
