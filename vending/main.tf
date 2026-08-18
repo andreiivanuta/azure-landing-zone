@@ -24,7 +24,11 @@ data "azurerm_storage_account" "state" {
 resource "azurerm_resource_group" "workload" {
   name     = var.workload.resource_group_name
   location = local.workload_location
-  tags     = merge(var.tags, { workload = var.workload_name })
+  tags = merge(
+    var.tags,
+    { workload = var.workload_name },
+    var.workload.owner != null ? { owner = var.workload.owner } : {},
+  )
 }
 
 # Vend this one workload's identities through the guardrailed module.

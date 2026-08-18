@@ -24,6 +24,10 @@ on:
         description: "Git ref/SHA that still contains the workload's intake file (defaults to the current branch)."
         required: false
         default: ""
+      force:
+        description: "Override deletion protection (type true to destroy a protected workload)."
+        required: false
+        default: "false"
 
 permissions:
   id-token: write # OIDC login to Azure
@@ -105,7 +109,23 @@ jobs:
             exit 1
           fi
 
-      - name: Azure login (OIDC, vending write identity)
+      - name: Deletion-protection gate
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          f="vending/workloads/${{ matrix.workload }}.tfvars"
+          # Protected unless the file explicitly sets deletion_protection = false (default is ON).
+          if grep -Eq '^[[:space:]]*deletion_protection[[:space:]]*=[[:space:]]*false\b' "$f"; then
+            protected=false
+          else
+            protected=true
+          fi
+          if [ "$protected" = "true" ] && [ "${FORCE:-false}" != "true" ]; then
+            echo "::error::Workload '${{ matrix.workload }}' is deletion-protected. To offboard, first set 'deletion_protection = false' in its intake file via a PR (or re-run this workflow manually with force = true)."
+            exit 1
+          fi
+          echo "deletion-protection: protected=$protected force=${FORCE:-false} -> proceeding"
         uses: azure/login@v2
         with:
           client-id: ${{ vars.AZURE_CLIENT_ID }}

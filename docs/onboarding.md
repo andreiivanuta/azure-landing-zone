@@ -118,8 +118,24 @@ Override any of these only if your workload genuinely differs — add an explici
 
 Opening the PR posts a read-only `terraform plan` **preview** for review (the gate). Merging then re-plans
 against current state and applies automatically (merge = deploy) — no second approval to remember, and the
-apply is safely re-runnable. To offboard later, delete your file in a PR: the preview shows a
-`terraform plan -destroy`, and merging runs the destroy.
+apply is safely re-runnable.
+
+### Offboarding (and why it's deliberately harder than onboarding)
+
+Deleting your intake file in a PR offboards the workload — the preview shows a `terraform plan -destroy`,
+and merging runs it. But destroying a landing zone is irreversible and, because vending owns the workload's
+**resource group**, deleting it **recursively deletes everything the workload put inside it** (its AKS
+cluster, disks, IPs …). So offboarding has extra guardrails:
+
+- **Deletion protection (default ON).** Every workload is protected unless its file sets
+  `deletion_protection = false`. A protected workload's offboard is **refused** by the destroy workflow, so
+  a stray "delete the file" PR cannot tear down a live workload. To offboard on purpose, do it in **two
+  steps**: (1) merge a PR setting `deletion_protection = false`, then (2) merge a PR deleting the file. A
+  maintainer can also override once by running `vending-destroy` manually with `force = true`.
+- **Blast-radius pre-flight** *(when enabled)* — the destroy refuses if the resource group still contains
+  resources, i.e. the workload hasn't torn down its own infrastructure yet. Fail-safe: nothing is destroyed.
+- **Owner surfaced** — set `owner` in your file and it appears on the RG tag and in the destroy preview, so
+  a reviewer knows who to contact first.
 
 ### 4. What the guardrails allow
 
