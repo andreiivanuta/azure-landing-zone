@@ -112,48 +112,53 @@ The module rejects, at plan time, anything outside policy:
 - OIDC subjects with no wildcards — one repository per credential;
 - at least one environment per identity.
 
-### 5. What you receive
+### 5. What you receive (seeded automatically on merge)
 
-Vending mints your identities and **emits their client IDs as a Terraform output**
-(`workload_identity_client_ids`, keyed by role), visible in the apply run's log. Today, putting
-those into your workload repository is a **manual step** — automated seeding is planned (see the
-open *Workload repo seeding* item in [implementation-plan.md](implementation-plan.md)). Read the
-client IDs from the apply run, then set them per environment (`plan` / `apply` / `destroy` /
-`cleanup`):
+When your PR merges, vending seeds your workload repository automatically — no manual step:
 
-- `AZURE_CLIENT_ID` — a **variable** holding the client ID of the identity federated to that
-  environment (the roles differ);
-- `AZURE_TENANT_ID` — a **variable**;
-- `AZURE_SUBSCRIPTION_ID` — a **secret**.
+- `AZURE_CLIENT_ID_PLAN`, `AZURE_CLIENT_ID_APPLY`, `AZURE_CLIENT_ID_DESTROY`,
+  `AZURE_CLIENT_ID_CLEANUP` — **repo-level variables**, one per environment, each holding the
+  (non-secret) client ID of the identity federated to that environment;
+- `AZURE_TENANT_ID` and `STATE_STORAGE_ACCOUNT_NAME` — **repo-level variables**;
+- `AZURE_SUBSCRIPTION_ID` — a **repo-level secret**.
 
-```powershell
-# e.g. set the deploy identity's client ID in your workload repo's `apply` environment
-gh variable set AZURE_CLIENT_ID --env apply --repo <owner>/<repo> --body <client-id-from-output>
-```
+These are **repo-level** (not environment-scoped) on purpose: it keeps the platform's seeder
+least-privilege — it only needs permission to write variables/secrets, never to administer your
+repository. Security is unchanged, because a client ID is not a secret; the real gate is the OIDC
+federated-credential subject (`:environment:<env>`), which still requires your job to run in that
+environment.
 
-You also use the shared **state backend** (storage account + `tfstate` container) so your
-Terraform can store state — each workload under its own state key.
+You also use the shared **state backend** (storage account + `tfstate` container), each workload
+under its own state key.
 
 ### 6. Use them in your workflow
 
+Run each job in the matching environment (so its OIDC subject matches the vended credential), and
+read that environment's client-ID variable:
+
 ```yaml
-- uses: azure/login@<sha>
-  with:
-    client-id:       ${{ vars.AZURE_CLIENT_ID }}
-    tenant-id:       ${{ vars.AZURE_TENANT_ID }}
-    subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+jobs:
+  apply:
+    environment: apply            # OIDC subject becomes ...:environment:apply
+    steps:
+      - uses: azure/login@<sha>
+        with:
+          client-id:       ${{ vars.AZURE_CLIENT_ID_APPLY }}
+          tenant-id:       ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 ```
 
-The job's environment selects which identity you get, and the OIDC subject must match the credential
-the platform vended — so only your repository, in that environment, can assume that identity, with
-only the access the guardrails allowed.
+GitHub creates the `apply` environment on first reference. The rule is uniform: a job in
+`environment: <env>` logs in with `${{ vars.AZURE_CLIENT_ID_<ENV> }}` (e.g. `plan` → `_PLAN`).
+Only your repository, running in that environment, can assume that identity — with only the access
+the guardrails allowed.
 
 ## End to end
 
 ```text
 declaration (PR)  ->  preview + review + guardrails  ->  merge -> gated apply  ->  identities + federation + RBAC
                                                                         |
-                    set env vars/secret in the workload repo (manual today)  <--+
+                    seed repo variables + secret in the workload repo (automatic)  <--+
                                                                         |
 workload's apply job  ->  OIDC token  ->  matches the vended credential  ->  logs in  ->  deploys (fenced)
 ```

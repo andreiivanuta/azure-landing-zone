@@ -132,8 +132,12 @@ jobs:
       - name: Terraform apply (the exact reviewed plan)
         run: terraform -chdir=vending apply -input=false tf.plan
 
-      # --- Seed the workload repo automatically: create its environments + login values ---
+      # --- Seed the workload repo automatically with its login values (repo-level variables) ---
       # Uses a GitHub App installation token scoped to JUST this workload's repo (owner-granted, short-lived).
+      # We set REPO-LEVEL variables only (least privilege: the App needs just Variables/Secrets, not
+      # Administration). The workload's own job selects its identity by referencing a job `environment:`
+      # (which GitHub auto-creates) and reading AZURE_CLIENT_ID_<ENV>. Client IDs are not secrets; the real
+      # gate is the OIDC federated-credential subject (:environment:<env>).
       - name: Read vended outputs (repo slug + per-environment client IDs)
         id: tf
         run: |
@@ -153,7 +157,7 @@ jobs:
           owner: ${{ steps.tf.outputs.owner }}
           repositories: ${{ steps.tf.outputs.repo }}
 
-      - name: Seed the workload repo (environments + login values)
+      - name: Seed the workload repo (repo-level login values)
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
           SLUG: ${{ steps.tf.outputs.slug }}
@@ -162,14 +166,15 @@ jobs:
           STATE_SA: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
         run: |
           set -euo pipefail
-          # Repo-level constants (identical for every environment)
+          # Shared values (same for every job)
           gh variable set STATE_STORAGE_ACCOUNT_NAME --repo "$SLUG" --body "$STATE_SA"
           gh variable set AZURE_TENANT_ID            --repo "$SLUG" --body "$TENANT"
           gh secret   set AZURE_SUBSCRIPTION_ID      --repo "$SLUG" --body "$SUBSCRIPTION"
-          # Per-environment identity: create the environment, then set its AZURE_CLIENT_ID
+          # One non-secret client ID per environment as AZURE_CLIENT_ID_<ENV>.
+          # A workload job with `environment: apply` uses ${{ vars.AZURE_CLIENT_ID_APPLY }}, etc.
           jq -r 'keys[]' env_client_ids.json | while IFS= read -r env; do
             clientid="$(jq -r --arg e "$env" '.[$e]' env_client_ids.json)"
-            gh api --method PUT "repos/$SLUG/environments/$env" --silent
-            gh variable set AZURE_CLIENT_ID --repo "$SLUG" --env "$env" --body "$clientid"
-            echo "seeded $SLUG :: environment '$env'"
+            up="$(printf '%s' "$env" | tr '[:lower:]-' '[:upper:]_')"
+            gh variable set "AZURE_CLIENT_ID_${up}" --repo "$SLUG" --body "$clientid"
+            echo "seeded $SLUG :: AZURE_CLIENT_ID_${up}"
           done

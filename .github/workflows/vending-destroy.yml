@@ -146,7 +146,9 @@ jobs:
       - name: Terraform apply (the exact reviewed destroy plan)
         run: terraform -chdir=vending apply -input=false tf.plan
 
-      # --- Un-seed the workload repo: remove the environments created on onboard (identities are now gone) ---
+      # --- Un-seed the workload repo: remove the repo-level login values (identities are now gone) ---
+      # Repo-level variables/secret only -> the App needs just Variables/Secrets (no Administration).
+      # We do NOT delete the workload's environments (we never created them; GitHub auto-creates them).
       - name: Mint a repo-scoped token for the workload repo
         id: apptoken
         if: steps.tf.outputs.slug != ''
@@ -157,7 +159,7 @@ jobs:
           owner: ${{ steps.tf.outputs.owner }}
           repositories: ${{ steps.tf.outputs.repo }}
 
-      - name: Un-seed the workload repo (remove environments)
+      - name: Un-seed the workload repo (remove login values)
         if: steps.tf.outputs.slug != ''
         env:
           GH_TOKEN: ${{ steps.apptoken.outputs.token }}
@@ -165,6 +167,10 @@ jobs:
         run: |
           set -euo pipefail
           jq -r 'keys[]' env_client_ids.json | while IFS= read -r env; do
-            gh api --method DELETE "repos/$SLUG/environments/$env" --silent || echo "environment '$env' already absent"
-            echo "removed $SLUG :: environment '$env'"
+            up="$(printf '%s' "$env" | tr '[:lower:]-' '[:upper:]_')"
+            gh variable delete "AZURE_CLIENT_ID_${up}" --repo "$SLUG" 2>/dev/null || echo "AZURE_CLIENT_ID_${up} already absent"
           done
+          gh variable delete AZURE_TENANT_ID            --repo "$SLUG" 2>/dev/null || echo "AZURE_TENANT_ID already absent"
+          gh variable delete STATE_STORAGE_ACCOUNT_NAME --repo "$SLUG" 2>/dev/null || echo "STATE_STORAGE_ACCOUNT_NAME already absent"
+          gh secret   delete AZURE_SUBSCRIPTION_ID      --repo "$SLUG" 2>/dev/null || echo "AZURE_SUBSCRIPTION_ID already absent"
+          echo "un-seeded $SLUG"
