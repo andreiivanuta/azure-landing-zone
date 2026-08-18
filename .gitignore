@@ -11,6 +11,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Compiled ARM output from `az bicep build` (source of truth is the .bicep, so JSON is never committed)
+bootstrap-trust/main.json
+
 # Variable values may contain identifiers or secrets. Commit examples only.
 *.tfvars
 *.tfvars.json
