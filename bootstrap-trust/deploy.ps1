@@ -80,10 +80,10 @@ function Set-PlatformEnvironment {
 }
 
 # --- 5. Wire both platform environments -------------------------------------
-# admin   = break-glass, reachable only from dev.
-# vending = onboarding: dev previews (terraform plan), main applies (terraform apply).
-Set-PlatformEnvironment -Name 'admin'   -ClientId $adminClientId   -Branches @('dev')
-Set-PlatformEnvironment -Name 'vending' -ClientId $vendingClientId -Branches @('dev', 'main')
+# admin   = break-glass, reachable only from main (manual, protected admin workflows).
+# vending = onboarding pipeline: apply/destroy run from main on merge (PR previews run with no environment).
+Set-PlatformEnvironment -Name 'admin'   -ClientId $adminClientId   -Branches @('main')
+Set-PlatformEnvironment -Name 'vending' -ClientId $vendingClientId -Branches @('main')
 
 # --- 6. Shared repo-level values --------------------------------------------
 gh variable set STATE_STORAGE_ACCOUNT_NAME --body $stateSa -R $repo

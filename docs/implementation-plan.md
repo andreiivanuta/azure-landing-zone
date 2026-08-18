@@ -27,7 +27,7 @@ Out of scope (owned by workload repositories):
 Last reviewed: 2026-08-17
 
 - [x] Public GitHub repository created; account and repository security settings hardened.
-- [x] Local Git author uses the GitHub `noreply` address; work happens on branch `dev`.
+- [x] Local Git author uses the GitHub `noreply` address. Single-trunk model: `main` is the default and only long-lived branch; work happens on short-lived branches merged via pull request (the retired `dev` integration branch is gone).
 - [x] Terraform 1.15.8 installed locally; provider `hashicorp/azurerm ~> 4.0` pinned.
 - [x] Personal Azure context selected: `Visual Studio Enterprise Subscription`, region `swedencentral`.
 - [x] Repository split completed: this repo (`azure-landing-zone`, private) owns platform authority; workloads deploy from their own repos (first workload: `terraform-aks-sandbox`).
@@ -39,14 +39,14 @@ Last reviewed: 2026-08-17
   - `id-alz-vending-swc` — bounded vending UAMI, federated to GitHub environment `vending`; holds the custom role `Landing Zone Vendor (alz)` at subscription scope (no Contributor, no Owner).
 - [x] Terraform state backend moved into Bicep: one keyless (Entra-only) SA (Storage Account) with private `tfstate` container; Storage Blob Data Contributor granted to admin + vending.
 - [x] `admin` and `vending` GitHub environments seeded by `bootstrap-trust/deploy.ps1`:
-  - `admin` — branches: `dev` only (break-glass).
-  - `vending` — branches: `dev` (preview `terraform plan`) and `main` (apply).
+  - `admin` — branches: `main` only (break-glass).
+  - `vending` — branches: `main` (apply/destroy run on merge; PR previews run with no environment).
   - Each environment: `AZURE_CLIENT_ID` + `AZURE_TENANT_ID` as variables, `AZURE_SUBSCRIPTION_ID` as a secret; repo variable `STATE_STORAGE_ACCOUNT_NAME` set.
 - [x] OIDC + state-backend smoke test workflow (`.github/workflows/oidc-smoke-test.yml`) verified end-to-end as the `admin` identity.
 - [x] Guardrailed Terraform module `modules/workload-identity/` and single-workload `vending/` root implemented, targeting the identity RG; workload RG is now owned by vending itself (created and destroyed with the workload).
 - [x] Per-workload registry `vending/workloads/<name>.tfvars` established (committed via `.gitignore` exception; example: `taks.tfvars.example`).
-- [ ] Vending workflow `.github/workflows/vending.yml` (manual `plan` v1) — running as the `vending` environment; PR-plan / merge-apply + a changed-workload matrix are the next iteration.
-- [ ] Default-branch protection on `main` — pending, added after `vending.yml` matures.
+- [x] Vending workflows: `.github/workflows/vending-pr-plan.yml` (read-only PR preview — plan for added/changed, `plan -destroy` for deleted), `vending-apply.yml` (create/update on merge), and `vending-destroy.yml` (offboard on merge). Apply/destroy run under the `vending` environment; a changed-workload matrix fans out per registry file.
+- [x] Default-branch protection on `main`: require a pull request before merging (0 approvals, solo-friendly); the PR review + read-only plan preview is the gate (merge = deploy).
 - [ ] Workload repo seeding (client IDs into workload environments) — done as part of each workload's vending apply once the workflow matures.
 
 ## Fixed decisions
@@ -169,8 +169,8 @@ Platform identities (owned by the Bicep trust anchor, live in this repo):
 
 | Identity | GitHub environment | Azure access | State access | Invocation |
 |---|---|---|---|---|
-| `id-alz-admin-swc` | `admin` (branches: `dev`) | Contributor + UAA on `rg-alz-management-swc` | Storage Blob Data Contributor on state SA | Break-glass; manual, protected |
-| `id-alz-vending-swc` | `vending` (branches: `dev` for plan, `main` for apply) | Custom role `Landing Zone Vendor (alz)` at subscription scope | Storage Blob Data Contributor on state SA | Vending pipeline (PR plan / merge apply) |
+| `id-alz-admin-swc` | `admin` (branches: `main`) | Contributor + UAA on `rg-alz-management-swc` | Storage Blob Data Contributor on state SA | Break-glass; manual, protected |
+| `id-alz-vending-swc` | `vending` (branches: `main`) | Custom role `Landing Zone Vendor (alz)` at subscription scope | Storage Blob Data Contributor on state SA | Vending pipeline (PR plan / merge apply) |
 
 Per-workload identities (minted by the vending pipeline, live in `rg-alz-identity-swc`, consumed from the workload's own repo):
 
@@ -199,8 +199,8 @@ Every federated credential must use:
 Platform environments (this repository):
 
 ```text
-admin     # break-glass, branches: dev
-vending   # bounded vending pipeline, branches: dev (plan), main (apply)
+admin     # break-glass, branches: main
+vending   # bounded vending pipeline, branches: main (apply/destroy on merge)
 ```
 
 Workload environments (workload repository, e.g. `terraform-aks-sandbox`):
