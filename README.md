@@ -4,9 +4,8 @@ A learning-lab **platform landing zone**: the repository that establishes Azure
 trust and **vends** governed access to workload repositories, so those workloads can deploy
 through GitHub Actions using OIDC (OpenID Connect) — with no client secrets.
 
-This repository does **not** deploy any workload. The first workload (an ephemeral AKS
-cluster) lives in a separate repository (`terraform-aks-sandbox`) and only *consumes* what
-this platform provides.
+This repository does **not** deploy any workload — it only vends the trust, identities, and
+scoped access that workload repositories consume to deploy themselves.
 
 ## What it provides
 
@@ -15,6 +14,47 @@ this platform provides.
 - **Workload identity vending** — a guardrailed module that mints a workload's CI (Continuous
   Integration) identities, their GitHub OIDC federation, and least-privilege RBAC (Role-Based
   Access Control).
+
+## Prerequisites
+
+- **To onboard a workload:** an existing GitHub repository for your workload, and permission to
+  open a PR (Pull Request) against this repo. That's it — everything else is defaulted.
+- **To operate the platform** (the one-time trust anchor): `az`, `gh`, and Terraform installed
+  locally, plus an Azure role that can create identities and assign roles.
+
+## Quickstart — onboard a workload
+
+You add **one file** in a PR; merging vends your identities automatically. Full detail is in the
+[Operating & Onboarding Guide](docs/onboarding.md).
+
+**1. Get your OIDC subject** — binds Azure trust to your exact repository:
+
+```powershell
+gh api repos/<owner>/<repo> --jq '"repo:\(.owner.login)@\(.owner.id)/\(.name)@\(.id)"'
+```
+
+**2. Declare your workload** — add `vending/workloads/<name>.tfvars` (copy
+[taks.tfvars.example](vending/workloads/taks.tfvars.example)):
+
+```hcl
+workload = {
+  subject_prefix      = "repo:<owner>@<ownerId>/<repo>@<repoId>"
+  resource_group_name = "<your resource group>"
+}
+```
+
+**3. Open a PR** → a read-only `terraform plan` preview posts to the PR for review (the gate).
+
+**4. Merge** → your identities, GitHub OIDC federation, and least-privilege RBAC are created
+automatically (merge = deploy).
+
+**5. Wire your repo (manual today)** → create the `plan` / `apply` / `destroy` / `cleanup`
+environments in your workload repo and set `AZURE_CLIENT_ID` (from the apply run's output),
+`AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`; then authenticate with `azure/login`. Automating
+this handoff is a tracked next step.
+
+To **offboard**, delete your file in a PR: the preview shows a `terraform plan -destroy`, and
+merging runs it.
 
 ## Layout
 

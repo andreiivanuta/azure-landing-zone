@@ -4,7 +4,8 @@
 # The deleted file no longer exists on main HEAD, so the apply job checks out github.event.before (main just
 # before this merge), where vending/workloads/<name>.tfvars still exists, to load the config.
 #   detect job  : which workloads were deleted + find the PR-plan run that produced the reviewed destroy plan.
-#   destroy job : download that plan, log in as the vending write identity, and `terraform apply tf.plan`.
+#   destroy job : download that plan, log in as the vending write identity, `terraform apply tf.plan`,
+#                then un-seed the workload repo (remove the environments created on onboard) with a repo-scoped GitHub App token.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending destroy (offboard)
 
@@ -132,5 +133,38 @@ jobs:
           -backend-config="container_name=tfstate"
           -backend-config="key=${{ matrix.workload }}.tfstate"
 
+      - name: Capture seed coordinates before destroy
+        id: tf
+        run: |
+          slug=$(terraform -chdir=vending output -raw workload_repo_slug 2>/dev/null || echo "")
+          echo "slug=$slug"        >> "$GITHUB_OUTPUT"
+          echo "owner=${slug%%/*}" >> "$GITHUB_OUTPUT"
+          echo "repo=${slug##*/}"  >> "$GITHUB_OUTPUT"
+          terraform -chdir=vending output -json environment_client_ids > env_client_ids.json 2>/dev/null || echo '{}' > env_client_ids.json
+          echo "workload repo: ${slug:-<none>}"
+
       - name: Terraform apply (the exact reviewed destroy plan)
         run: terraform -chdir=vending apply -input=false tf.plan
+
+      # --- Un-seed the workload repo: remove the environments created on onboard (identities are now gone) ---
+      - name: Mint a repo-scoped token for the workload repo
+        id: apptoken
+        if: steps.tf.outputs.slug != ''
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.VENDING_APP_ID }}
+          private-key: ${{ secrets.VENDING_APP_PRIVATE_KEY }}
+          owner: ${{ steps.tf.outputs.owner }}
+          repositories: ${{ steps.tf.outputs.repo }}
+
+      - name: Un-seed the workload repo (remove environments)
+        if: steps.tf.outputs.slug != ''
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+          SLUG: ${{ steps.tf.outputs.slug }}
+        run: |
+          set -euo pipefail
+          jq -r 'keys[]' env_client_ids.json | while IFS= read -r env; do
+            gh api --method DELETE "repos/$SLUG/environments/$env" --silent || echo "environment '$env' already absent"
+            echo "removed $SLUG :: environment '$env'"
+          done

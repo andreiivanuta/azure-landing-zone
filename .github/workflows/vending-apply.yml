@@ -3,7 +3,8 @@
 # approved. If the state moved since the plan was saved, `terraform apply <planfile>` refuses (stale plan) and
 # fails safe - forcing a fresh PR/review. The plan is NOT recomputed here.
 #   detect job : which workloads changed + find the PR-plan run that produced the reviewed plan.
-#   apply job  : download that plan, log in as the vending write identity, and `terraform apply tf.plan`.
+#   apply job  : download that plan, log in as the vending write identity, `terraform apply tf.plan`,
+#                then seed the workload repo (its environments + login values) with a repo-scoped GitHub App token.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending apply (create/update)
 
@@ -130,3 +131,45 @@ jobs:
 
       - name: Terraform apply (the exact reviewed plan)
         run: terraform -chdir=vending apply -input=false tf.plan
+
+      # --- Seed the workload repo automatically: create its environments + login values ---
+      # Uses a GitHub App installation token scoped to JUST this workload's repo (owner-granted, short-lived).
+      - name: Read vended outputs (repo slug + per-environment client IDs)
+        id: tf
+        run: |
+          slug=$(terraform -chdir=vending output -raw workload_repo_slug)
+          echo "slug=$slug"        >> "$GITHUB_OUTPUT"
+          echo "owner=${slug%%/*}" >> "$GITHUB_OUTPUT"
+          echo "repo=${slug##*/}"  >> "$GITHUB_OUTPUT"
+          terraform -chdir=vending output -json environment_client_ids > env_client_ids.json
+          echo "workload repo: $slug"
+
+      - name: Mint a repo-scoped token for the workload repo
+        id: apptoken
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ vars.VENDING_APP_ID }}
+          private-key: ${{ secrets.VENDING_APP_PRIVATE_KEY }}
+          owner: ${{ steps.tf.outputs.owner }}
+          repositories: ${{ steps.tf.outputs.repo }}
+
+      - name: Seed the workload repo (environments + login values)
+        env:
+          GH_TOKEN: ${{ steps.apptoken.outputs.token }}
+          SLUG: ${{ steps.tf.outputs.slug }}
+          TENANT: ${{ vars.AZURE_TENANT_ID }}
+          SUBSCRIPTION: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          STATE_SA: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+        run: |
+          set -euo pipefail
+          # Repo-level constants (identical for every environment)
+          gh variable set STATE_STORAGE_ACCOUNT_NAME --repo "$SLUG" --body "$STATE_SA"
+          gh variable set AZURE_TENANT_ID            --repo "$SLUG" --body "$TENANT"
+          gh secret   set AZURE_SUBSCRIPTION_ID      --repo "$SLUG" --body "$SUBSCRIPTION"
+          # Per-environment identity: create the environment, then set its AZURE_CLIENT_ID
+          jq -r 'keys[]' env_client_ids.json | while IFS= read -r env; do
+            clientid="$(jq -r --arg e "$env" '.[$e]' env_client_ids.json)"
+            gh api --method PUT "repos/$SLUG/environments/$env" --silent
+            gh variable set AZURE_CLIENT_ID --repo "$SLUG" --env "$env" --body "$clientid"
+            echo "seeded $SLUG :: environment '$env'"
+          done
