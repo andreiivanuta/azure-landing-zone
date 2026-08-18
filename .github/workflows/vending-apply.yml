@@ -1,0 +1,156 @@
+# Gated apply on merge to main: plan the changed workloads read-only, then apply the EXACT saved plan
+# after a human approves the `vending` environment. Fidelity: the approver sees the plan job's output and
+# the apply job runs that same tf.plan (Terraform refuses a stale plan if state moved).
+#   plan job  : read-only PR identity (:ref:refs/heads/main), no environment -> cannot change anything
+#   apply job : vending identity, environment `vending` (required reviewer) -> applies the saved plan
+# NOTE: pin actions to commit SHAs before treating any workflow as production.
+name: Vending apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "vending/**"
+      - "modules/workload-identity/**"
+      - "config/project.json"
+      - ".github/workflows/vending-apply.yml"
+
+permissions:
+  id-token: write # OIDC login to Azure
+  contents: read # checkout
+
+# Serialize applies so two runs never touch the shared state at once.
+concurrency:
+  group: vending-apply
+  cancel-in-progress: false
+
+jobs:
+  # 1) Which workloads' intake files changed in this push (merge)?
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      workloads: ${{ steps.diff.outputs.workloads }}
+      any: ${{ steps.diff.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        name: Detect changed workloads
+        run: |
+          base='${{ github.event.before }}'
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base=$(git rev-parse HEAD^ 2>/dev/null || echo '')
+          fi
+          if [ -z "$base" ]; then
+            changed=$(git show --name-only --pretty=format: HEAD -- 'vending/workloads/*.tfvars')
+          else
+            changed=$(git diff --name-only "$base" '${{ github.sha }}' -- 'vending/workloads/*.tfvars')
+          fi
+          changed=$(printf '%s\n' "$changed" | grep -v '\.example$' | grep -v '^$' \
+            | xargs -r -n1 basename | sed 's/\.tfvars$//' | sort -u)
+          if [ -n "$changed" ]; then
+            json=$(printf '%s\n' "$changed" | jq -R . | jq -cs .)
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            json='[]'
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "workloads=$json" >> "$GITHUB_OUTPUT"
+          echo "Changed workloads: $json"
+
+  # 2) Read-only plan per changed workload; save the plan as an artifact for the apply job.
+  plan:
+    needs: detect
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: ${{ fromJSON(needs.detect.outputs.workloads) }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.VENDING_PR_CLIENT_ID }} # read-only identity (repo variable)
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC, read-only identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.VENDING_PR_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (this workload's state key)
+        run: >
+          terraform -chdir=vending init -input=false
+          -backend-config="resource_group_name=rg-alz-management-swc"
+          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ matrix.workload }}.tfstate"
+
+      - name: Terraform plan (read-only, save to file)
+        run: >
+          terraform -chdir=vending plan -input=false -lock=false -out=tf.plan
+          -var="workload_name=${{ matrix.workload }}"
+          -var-file="workloads/${{ matrix.workload }}.tfvars"
+
+      - name: Upload saved plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.workload }}
+          path: vending/tf.plan
+          retention-days: 1
+          if-no-files-found: error
+
+  # 3) Gated apply of the EXACT saved plan, one approval per workload.
+  apply:
+    needs: [detect, plan]
+    if: needs.detect.outputs.any == 'true'
+    runs-on: ubuntu-latest
+    environment: vending # required reviewer gates this; the token subject is :environment:vending on main
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        workload: ${{ fromJSON(needs.detect.outputs.workloads) }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }} # vending (write) identity from the environment
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the saved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.workload }}
+          path: vending
+
+      - name: Azure login (OIDC, vending identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (same state key)
+        run: >
+          terraform -chdir=vending init -input=false
+          -backend-config="resource_group_name=rg-alz-management-swc"
+          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ matrix.workload }}.tfstate"
+
+      - name: Terraform apply (exact saved plan)
+        run: terraform -chdir=vending apply -input=false tf.plan

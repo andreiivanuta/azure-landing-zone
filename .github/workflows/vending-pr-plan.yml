@@ -1,0 +1,131 @@
+# Automated read-only Terraform plan for vending workload changes proposed in a pull request.
+# Runs as the LOW-TRUST, read-only PR identity (OIDC subject :pull_request) - never the vending identity.
+# It previews changes and posts them to the PR for review; it can make NO changes (no lock, read-only RBAC).
+# Apply happens only after merge, under the vending environment (separate workflow).
+# NOTE: pin actions to commit SHAs before treating any workflow as production.
+name: Vending PR plan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "vending/**"
+      - "modules/workload-identity/**"
+      - "config/project.json"
+      - ".github/workflows/vending-pr-plan.yml"
+
+permissions:
+  id-token: write # mint the GitHub OIDC token for Azure login
+  contents: read # checkout
+  pull-requests: write # post the plan as a PR comment
+
+# One in-flight plan per PR; a new push cancels the previous run.
+concurrency:
+  group: vending-pr-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # 1) Which workloads' intake files changed in this PR?
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      workloads: ${{ steps.diff.outputs.workloads }}
+      any: ${{ steps.diff.outputs.any }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need base + head to diff
+
+      - id: diff
+        name: Detect changed workloads
+        run: |
+          base='${{ github.event.pull_request.base.sha }}'
+          head='${{ github.event.pull_request.head.sha }}'
+          changed=$(git diff --name-only "$base" "$head" -- 'vending/workloads/*.tfvars' \
+            | grep -v '\.example$' \
+            | xargs -r -n1 basename \
+            | sed 's/\.tfvars$//' \
+            | sort -u)
+          if [ -n "$changed" ]; then
+            json=$(printf '%s\n' "$changed" | jq -R . | jq -cs .)
+            echo "any=true" >> "$GITHUB_OUTPUT"
+          else
+            json='[]'
+            echo "any=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "workloads=$json" >> "$GITHUB_OUTPUT"
+          echo "Changed workloads: $json"
+
+  # 2) One read-only plan per changed workload, posted back to the PR.
+  plan:
+    needs: detect
+    if: >
+      needs.detect.outputs.any == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: ${{ fromJSON(needs.detect.outputs.workloads) }}
+    env:
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ vars.VENDING_PR_CLIENT_ID }} # read-only PR identity (repo variable)
+      ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      TF_VAR_state_storage_account_name: ${{ vars.STATE_STORAGE_ACCOUNT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure login (OIDC, read-only PR identity)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.VENDING_PR_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init (this workload's state key)
+        run: >
+          terraform -chdir=vending init -input=false
+          -backend-config="resource_group_name=rg-alz-management-swc"
+          -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=${{ matrix.workload }}.tfstate"
+
+      - name: Terraform plan (read-only, no lock)
+        id: plan
+        run: |
+          set +e
+          terraform -chdir=vending plan -input=false -lock=false -no-color \
+            -var="workload_name=${{ matrix.workload }}" \
+            -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
+          echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Post plan to the PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const workload = '${{ matrix.workload }}';
+            let plan = fs.readFileSync('plan.txt', 'utf8');
+            const max = 60000;
+            if (plan.length > max) plan = plan.slice(0, max) + '\n... (truncated) ...';
+            const marker = `<!-- vending-pr-plan:${workload} -->`;
+            const body = `${marker}\n### Vending plan — \`${workload}\`\n\n<details><summary>terraform plan</summary>\n\n\`\`\`\n${plan}\n\`\`\`\n\n</details>`;
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail the check if plan errored
+        if: steps.plan.outputs.exitcode != '0'
+        run: |
+          echo "::error::terraform plan failed for ${{ matrix.workload }}"
+          exit 1
