@@ -9,6 +9,10 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 ## [Unreleased]
 
 ### Added
+- **Single-trunk model**: `main` is now the default and only long-lived branch. The `dev` integration
+  branch is retired (nothing triggered from it; it only drifted). Work happens on short-lived branches
+  merged via pull request. The `admin` and `vending` environment branch policies (and `deploy.ps1`) now
+  target `main`, so break-glass and vending both run from the single trunk.
 - **Vending intake defaults (less boilerplate)**: in `vending/`, a workload's `identities` now defaults to
   the standard **plan / deploy / cleanup** archetype and its region defaults to the platform region, so a
   new workload file needs only `subject_prefix` + `resource_group_name`. Everything stays overridable, and
