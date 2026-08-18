@@ -186,22 +186,26 @@ jobs:
             -var-file="workloads/${{ matrix.workload }}.tfvars" | tee plan.txt
           echo "exitcode=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
-      - name: Read owner + live RG inventory
+      - name: Collect owner + enriched RG inventory
         id: meta
         run: |
           f="vending/workloads/${{ matrix.workload }}.tfvars"
           owner=$(sed -n 's/^[[:space:]]*owner[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1)
           echo "owner=$owner" >> "$GITHUB_OUTPUT"
-          # Live blast-radius: what does the RG actually contain right now? (read-only PR identity has Reader)
           rg=$(sed -n 's/^[[:space:]]*resource_group_name[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$f" | head -n1)
+          echo "rg=$rg" >> "$GITHUB_OUTPUT"
+          # Live blast-radius: enriched view of what the RG actually contains (read-only PR identity has Reader).
+          # Include per-resource status, location, owner/contact tags and creation time so a reviewer has the
+          # context to reach out before approving. Fall back progressively if --expand isn't supported.
           if az group show -n "$rg" -o none 2>/dev/null; then
-            az resource list -g "$rg" --query "[].{name:name,type:type,state:provisioningState}" -o table > rg_inventory.txt 2>/dev/null || echo "(could not read resource group contents)" > rg_inventory.txt
-            count=$(az resource list -g "$rg" --query "length(@)" -o tsv 2>/dev/null || echo "?")
+            az resource list -g "$rg" \
+              --query "sort_by([].{name:name, type:type, location:location, status:provisioningState, owner:tags.owner, contact:tags.contact, created:createdTime}, &type)" \
+              -o json > rg_inventory.json 2>/dev/null \
+              || az resource list -g "$rg" -o json > rg_inventory.json 2>/dev/null \
+              || echo '[]' > rg_inventory.json
           else
-            echo "(resource group $rg does not exist)" > rg_inventory.txt
-            count=0
+            echo '[]' > rg_inventory.json
           fi
-          echo "rgcount=$count" >> "$GITHUB_OUTPUT"
 
       - name: Post offboard preview to the PR
         if: always()
@@ -210,23 +214,34 @@ jobs:
           WORKLOAD: ${{ matrix.workload }}
           MODE: destroy
           OWNER: ${{ steps.meta.outputs.owner }}
-          RGCOUNT: ${{ steps.meta.outputs.rgcount }}
+          RG: ${{ steps.meta.outputs.rg }}
         with:
           script: |
             const fs = require('fs');
-            const { WORKLOAD, MODE, OWNER, RGCOUNT } = process.env;
+            const { WORKLOAD, MODE, OWNER, RG } = process.env;
             let out = fs.readFileSync('plan.txt', 'utf8');
             const max = 60000;
             if (out.length > max) out = out.slice(0, max) + '\n... (truncated) ...';
-            let inv = '';
-            try { inv = fs.readFileSync('rg_inventory.txt', 'utf8'); } catch (e) { inv = '(inventory unavailable)'; }
+            let rows = [];
+            try { rows = JSON.parse(fs.readFileSync('rg_inventory.json', 'utf8')); } catch (e) { rows = []; }
+            if (!Array.isArray(rows)) rows = [];
+            const count = rows.length;
+            const esc = (s) => String(s == null ? '' : s).replace(/\|/g, '\\|');
+            let invTable;
+            if (count === 0) {
+              invTable = '_The resource group is empty of workload resources._';
+            } else {
+              const header = '| Name | Type | Location | Status | Owner tag | Contact tag | Created |\n|---|---|---|---|---|---|---|';
+              const bodyRows = rows.map(r => `| ${esc(r.name)} | ${esc(r.type)} | ${esc(r.location)} | ${esc(r.status)} | ${esc(r.owner)} | ${esc(r.contact)} | ${esc(r.created)} |`).join('\n');
+              invTable = `${header}\n${bodyRows}`;
+            }
             const marker = `<!-- vending-pr-plan:${MODE}:${WORKLOAD} -->`;
             const ownerLine = OWNER ? `\n> **Owner:** ${OWNER} — reach out before offboarding.` : '';
             const banner = `> ⚠️ **Merging offboards this workload** — a fresh \`terraform destroy\` is re-planned and applied on merge.${ownerLine}`;
-            const blast = (RGCOUNT && RGCOUNT !== '0')
-              ? `> 💥 **Blast radius:** the resource group still contains **${RGCOUNT}** resource(s) (below). Deleting the RG deletes these too — the destroy workflow will **refuse** unless forced.`
-              : `> ✅ **Blast radius:** the resource group is empty of workload resources.`;
-            const body = `${marker}\n### Vending ${MODE} (offboard) — \`${WORKLOAD}\`\n\n${banner}\n\n${blast}\n\n<details><summary>resource group contents</summary>\n\n\`\`\`\n${inv}\n\`\`\`\n\n</details>\n\n<details><summary>terraform plan -destroy</summary>\n\n\`\`\`\n${out}\n\`\`\`\n\n</details>`;
+            const blast = (count > 0)
+              ? `> 💥 **Blast radius:** the resource group \`${RG}\` still contains **${count}** resource(s) — deleting the RG deletes these too. The destroy workflow will **refuse** unless forced.`
+              : `> ✅ **Blast radius:** the resource group \`${RG}\` is empty of workload resources.`;
+            const body = `${marker}\n### Vending ${MODE} (offboard) — \`${WORKLOAD}\`\n\n${banner}\n\n${blast}\n\n**Resource group contents (\`${RG}\`)**\n\n${invTable}\n\n<details><summary>terraform plan -destroy</summary>\n\n\`\`\`\n${out}\n\`\`\`\n\n</details>`;
             const { owner, repo } = context.repo;
             const issue_number = context.issue.number;
             const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });

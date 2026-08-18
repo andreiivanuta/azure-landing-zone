@@ -131,7 +131,9 @@ jobs:
             echo "resource group '$rg' contains ${count:-0} resource(s)"
             if [ "${count:-0}" -gt 0 ] && [ "${FORCE:-false}" != "true" ]; then
               echo "::error::RG '$rg' still contains ${count} resource(s) — these belong to the workload and would be RECURSIVELY DELETED with the RG. Have the workload tear down its own infrastructure first, or re-run this workflow manually with force = true."
-              az resource list -g "$rg" --query "[].{name:name,type:type,state:provisioningState}" -o table || true
+              az resource list -g "$rg" \
+                --query "sort_by([].{name:name, type:type, location:location, status:provisioningState, owner:tags.owner, contact:tags.contact, created:createdTime}, &type)" \
+                -o table || az resource list -g "$rg" -o table || true
               exit 1
             fi
           fi
