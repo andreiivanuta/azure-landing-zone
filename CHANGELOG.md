@@ -9,6 +9,11 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 ## [Unreleased]
 
 ### Added
+- **Reviewed-plan fidelity (carry the plan)**: `vending-pr-plan.yml` now uploads each saved `tf.plan` as an
+  artifact (keyed by workload + PR head SHA). On merge, `vending-apply.yml` / `vending-destroy.yml` correlate
+  the merge commit to its PR, download that exact artifact, and `terraform apply tf.plan` — so what deploys is
+  byte-for-byte the plan that was reviewed. If state moved since the plan was saved, Terraform refuses (stale
+  plan) and fails safe. Terraform is pinned to one version across all workflows so saved plans stay applyable.
 - **Single-trunk model**: `main` is now the default and only long-lived branch. The `dev` integration
   branch is retired (nothing triggered from it; it only drifted). Work happens on short-lived branches
   merged via pull request. The `admin` and `vending` environment branch policies (and `deploy.ps1`) now
