@@ -29,6 +29,8 @@ $adminSubject   = "${subjectPrefix}:environment:admin"
 $vendingSubject = "${subjectPrefix}:environment:vending"
 # PR previews carry the ":pull_request" subject (no environment), so the read-only plan identity trusts exactly that.
 $prSubject      = "${subjectPrefix}:pull_request"
+# The same read-only identity also plans during merge-apply, which runs on a push to main: ":ref:refs/heads/main".
+$mainRefSubject = "${subjectPrefix}:ref:refs/heads/main"
 
 # --- 2. Deploy the trust anchor (idempotent) --------------------------------
 Write-Host 'Deploying trust anchor...'
@@ -39,6 +41,7 @@ az deployment sub create `
   --parameters "adminOidcSubject=$adminSubject" `
   --parameters "vendingOidcSubject=$vendingSubject" `
   --parameters "pullRequestOidcSubject=$prSubject" `
+  --parameters "mainRefOidcSubject=$mainRefSubject" `
   --output none
 
 # --- 3. Read the outputs + account context (never printed) ------------------
@@ -87,5 +90,10 @@ gh variable set STATE_STORAGE_ACCOUNT_NAME --body $stateSa -R $repo
 # PR-plan client id is a repo variable (not an environment): the pull_request job runs with NO environment,
 # so it reads this at repo scope. A client id is a non-secret identifier.
 gh variable set VENDING_PR_CLIENT_ID --body $planClientId -R $repo
+# Tenant + subscription must also exist at repo scope for the environment-less PR job.
+# They coexist with the per-environment copies (env value wins for env jobs; repo value is the PR job's fallback).
+# Same sensitivity split as the environments: tenant is a variable, subscription is a secret.
+gh variable set AZURE_TENANT_ID       --body $tenantId -R $repo
+gh secret   set AZURE_SUBSCRIPTION_ID --body $subId    -R $repo
 
 Write-Host 'Done: trust anchor deployed and GitHub (admin + vending) wired.'

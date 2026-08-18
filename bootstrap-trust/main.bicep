@@ -12,6 +12,10 @@ param vendingOidcSubject string
 @minLength(1)
 param pullRequestOidcSubject string
 
+@description('Exact immutable GitHub Actions OIDC subject for the main branch ref (ends in :ref:refs/heads/main). Lets the read-only identity also plan during merge-apply. Provide at deployment time; do not commit it.')
+@minLength(1)
+param mainRefOidcSubject string
+
 @description('Optional tags merged with the platform tags.')
 param additionalTags object = {}
 
@@ -154,6 +158,8 @@ module planIdentity 'modules/identity.bicep' = {
     location: location
     credentialName: 'github-vending-pr'
     oidcSubject: pullRequestOidcSubject
+    extraCredentialName: 'github-vending-main-plan'
+    extraOidcSubject: mainRefOidcSubject
     tags: union(commonTags, {
       lifecycle: 'persistent'
       purpose: 'github-pr-plan-oidc'
