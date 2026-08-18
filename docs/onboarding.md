@@ -76,23 +76,27 @@ renamed or recreated repository cannot inherit the old trust.
 ### 3. Submit your declaration
 
 Open a pull request adding your own registry file `vending/workloads/<name>.tfvars` (see
-`vending/workloads/taks.tfvars.example` for a filled-in AKS example). Each workload is one file with
-its own state key:
+`vending/workloads/taks.tfvars.example`). Each workload is one file with its own state key. In the
+**minimal form you only supply the two facts the platform can't know for you**:
 
 ```hcl
 workload = {
   subject_prefix      = "repo:<owner>@<ownerId>/<repo>@<repoId>"
-  resource_group_name = "<your resource group>" # assigned by the platform
-  location            = "swedencentral"
-  location_code       = "swc"
-
-  identities = {
-    plan    = { resource_group_role = "Reader",      state_role = "Storage Blob Data Reader",      environments = ["<plan-env>"] }
-    deploy  = { resource_group_role = "Contributor", state_role = "Storage Blob Data Contributor", environments = ["<apply-env>", "<destroy-env>"] }
-    cleanup = { resource_group_role = "Contributor", state_role = "Storage Blob Data Contributor", environments = ["<cleanup-env>"] }
-  }
+  resource_group_name = "<your resource group>"
 }
 ```
+
+That's it — the region defaults to the platform region, and the identities default to the standard
+**plan / deploy / cleanup** archetype:
+
+| Identity | Control-plane role | State role | Federated environments |
+|---|---|---|---|
+| `plan` | Reader | Storage Blob Data Reader | `plan` |
+| `deploy` | Contributor | Storage Blob Data Contributor | `apply`, `destroy` |
+| `cleanup` | Contributor | Storage Blob Data Contributor | `cleanup` |
+
+Override any of these only if your workload genuinely differs — add an explicit `location` /
+`location_code`, or a full `identities = { ... }` block (the module's guardrails still apply).
 
 Opening the PR posts a read-only `terraform plan` **preview** for review (the gate). Merging then applies
 the exact plan automatically (merge = deploy) — no second approval to remember. To offboard later, delete

@@ -9,6 +9,10 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 ## [Unreleased]
 
 ### Added
+- **Vending intake defaults (less boilerplate)**: in `vending/`, a workload's `identities` now defaults to
+  the standard **plan / deploy / cleanup** archetype and its region defaults to the platform region, so a
+  new workload file needs only `subject_prefix` + `resource_group_name`. Everything stays overridable, and
+  the module guardrails still apply. Updated `taks.tfvars.example` and `docs/onboarding.md` to the minimal form.
 - **Branch protection on `main`**: require a pull request before merging (no direct pushes), so every
   workload change flows through the read-only plan preview. Solo-friendly (0 required approvals).
 - Baseline commit of the platform (landing zone) foundation:
