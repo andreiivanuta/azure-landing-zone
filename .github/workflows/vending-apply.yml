@@ -1,8 +1,9 @@
 # Automated CREATE/UPDATE flow: when a merge to main adds or changes a workload intake file,
-# plan it (read-only), PAUSE for a required reviewer on the `vending` environment, then apply the EXACT saved plan.
+# plan it (read-only) then apply the EXACT saved plan - automatically (merge = deploy; the PR is the gate).
 #   plan job    : read-only identity (OIDC :ref:refs/heads/main), no environment -> cannot change anything
-#   apply job   : vending identity, environment `vending` (required reviewer) -> in-run approval, then apply tf.plan
-# The reviewer reads the plan in the plan job's summary, then approves the waiting apply job - all in ONE run.
+#   apply job   : vending identity, environment `vending` -> supplies the write OIDC subject; applies tf.plan
+# The gate is the pull request (branch protection + the plan preview posted on the PR). The `vending`
+# environment carries no required reviewer, so apply runs on merge with no second approval to forget.
 # NOTE: pin actions to commit SHAs before treating any workflow as production.
 name: Vending apply (create/update)
 
@@ -92,7 +93,7 @@ jobs:
             -var="workload_name=${{ matrix.workload }}" \
             -var-file="workloads/${{ matrix.workload }}.tfvars"
           {
-            echo "### Vending apply plan — \`${{ matrix.workload }}\` (approve the apply job to execute)"
+            echo "### Vending apply plan — \`${{ matrix.workload }}\` (applied automatically on merge)"
             echo '```'
             terraform -chdir=vending show -no-color tf.plan
             echo '```'
@@ -106,12 +107,12 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
-  # 3) GATED apply of the exact saved plan. environment `vending` pauses here for the required reviewer.
+  # 3) Apply the exact saved plan. environment `vending` supplies the write OIDC subject (no required reviewer).
   apply:
     needs: [detect, plan]
     if: needs.detect.outputs.any == 'true'
     runs-on: ubuntu-latest
-    environment: vending # required reviewer -> in-run approval; OIDC subject :environment:vending on main
+    environment: vending # supplies the vending write identity's OIDC subject :environment:vending on main
     strategy:
       fail-fast: false
       max-parallel: 1

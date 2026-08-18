@@ -49,10 +49,10 @@ The registry drives three workflows automatically:
 - **`vending-pr-plan.yml`** — a pull request into `main` posts a read-only preview to the PR:
   `terraform plan` for added/changed workloads, `terraform plan -destroy` for deleted ones. It runs as
   a **read-only** identity, so an untrusted PR can preview but never change anything.
-- **`vending-apply.yml`** — merging a create/update change **pauses on the `vending` environment for a
-  required reviewer**, then applies the exact reviewed plan.
-- **`vending-destroy.yml`** — merging a deletion (offboard) pauses for a required reviewer, then
-  destroys the exact reviewed plan.
+- **`vending-apply.yml`** — merging a create/update change plans it and then applies the exact plan
+  **automatically** (merge = deploy). The pull request is the gate.
+- **`vending-destroy.yml`** — merging a deletion (offboard) plans the destroy and then destroys the exact
+  plan automatically.
 
 ## Part B — Onboarding a workload
 
@@ -94,10 +94,9 @@ workload = {
 }
 ```
 
-Opening the PR posts a read-only `terraform plan` **preview** for review (the first gate). Merging then
-**pauses the apply on the `vending` environment for a required reviewer** (the second gate) before it
-runs. To offboard later, delete your file in a PR: the preview shows a `terraform plan -destroy`, and
-merging runs the same gated destroy.
+Opening the PR posts a read-only `terraform plan` **preview** for review (the gate). Merging then applies
+the exact plan automatically (merge = deploy) — no second approval to remember. To offboard later, delete
+your file in a PR: the preview shows a `terraform plan -destroy`, and merging runs the destroy.
 
 ### 4. What the guardrails allow
 
