@@ -120,22 +120,18 @@ Opening the PR posts a read-only `terraform plan` **preview** for review (the ga
 against current state and applies automatically (merge = deploy) — no second approval to remember, and the
 apply is safely re-runnable.
 
-### Offboarding (and why it's deliberately harder than onboarding)
+### Offboarding
 
 Deleting your intake file in a PR offboards the workload — the preview shows a `terraform plan -destroy`,
 and merging runs it. But destroying a landing zone is irreversible and, because vending owns the workload's
 **resource group**, deleting it **recursively deletes everything the workload put inside it** (its AKS
-cluster, disks, IPs …). So offboarding has extra guardrails:
+cluster, disks, IPs …). So offboarding has guardrails:
 
-- **Deletion protection (default ON).** Every workload is protected unless its file sets
-  `deletion_protection = false`. A protected workload's offboard is **refused** by the destroy workflow, so
-  a stray "delete the file" PR cannot tear down a live workload. To offboard on purpose, do it in **two
-  steps**: (1) merge a PR setting `deletion_protection = false`, then (2) merge a PR deleting the file. A
-  maintainer can also override once by running `vending-destroy` manually with `force = true`.
 - **Blast-radius pre-flight.** Before destroying, the workflow lists the resource group's live
   contents and **refuses if it still contains resources** — i.e. the workload hasn't torn down its own
-  infrastructure yet (deleting the RG would recursively delete it). Fail-safe: nothing is destroyed.
-  The offboard preview shows the same live inventory so you see the blast radius before merging.
+  infrastructure yet (deleting the RG would recursively delete it). Fail-safe: nothing is destroyed. A
+  maintainer can override once by running `vending-destroy` manually with `force = true`. So the safe
+  order is: the workload tears down its own infrastructure first, then you delete the intake file.
 - **Owner surfaced** — set `owner` in your file and it appears on the RG tag and in the destroy preview, so
   a reviewer knows who to contact first.
 
