@@ -35,7 +35,9 @@ identity for Actions to use.
 
 The Terraform state backend — an Entra-ID-only storage account with a private `tfstate` container — is
 provisioned by the Bicep trust anchor in step 0 (not a separate Terraform root), so there is no state
-chicken-and-egg. Every workload stores its own state under its own key (`<name>.tfstate`).
+chicken-and-egg. Each workload has **two** state keys in that container — `<name>-vending.tfstate`
+(this platform's vending root) and `<name>-infra.tfstate` (the workload repo's own root) — kept
+separate so the two roots never collide.
 
 ### 2. `vending/` — workload identities
 

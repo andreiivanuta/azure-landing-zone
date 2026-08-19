@@ -83,7 +83,7 @@ fails before anything is created:
 Consumes the module once per workload. It creates the workload RG itself (so onboarding
 needs no manual RG step and offboarding can tear it down), looks up the platform identities
 by name to grant them the blast-radius `Reader`, and runs under a **per-workload state key**
-(`<name>.tfstate`) so one workload's blast radius stays inside its own state. Its outputs —
+(`<name>-vending.tfstate`) so one workload's blast radius stays inside its own state. Its outputs —
 `environment_client_ids` and `workload_repo_slug` — drive the automated seeding.
 
 ### Workflows — `.github/workflows/`
@@ -223,14 +223,22 @@ plus **Terraform's own state locking and serial checks**, plus the blast-radius 
 The Entra-ID-only storage account is provisioned by the trust anchor (not a separate
 Terraform root), so there is no state chicken-and-egg. Each root supplies its backend at
 `init` time via `-backend-config` (never a committed backend file with account-specific
-values), and `vending/` uses one state key per workload:
+values). Each workload actually has **two independent Terraform roots, hence two state keys**
+in the shared `tfstate` container — the platform vending it, and the workload deploying itself:
 
 ```text
 resource_group_name  = rg-alz-management-swc
 storage_account_name = <uniqueString-derived, from STATE_STORAGE_ACCOUNT_NAME>
 container_name       = tfstate
-key                  = <workload>.tfstate
+key                  = <workload>-vending.tfstate   # this repo's vending root
+                       <workload>-infra.tfstate     # the workload repo's own root
 ```
+
+Keeping the two keys distinct is essential: each Terraform root treats its state file as the
+**complete inventory** of everything it manages, so anything in state but absent from the config
+is scheduled for deletion. If both roots shared one key, each run would try to destroy the other
+root's resources. That is exactly why the platform side is `-vending` and the workload side is
+`-infra`.
 
 The account is keyless (shared-key disabled), HTTPS-only, TLS 1.2+, no public blob access,
 with blob versioning and soft delete. State and plans are sensitive and never enter Git,
@@ -264,7 +272,7 @@ Distilled rationale for the current design (full history is in Git and [CHANGELO
 | Split platform vs workload into two repositories | Separates persistent, elevated, run-once platform from disposable, narrow, CI/CD workload; isolates blast radius. |
 | Custom `Landing Zone Vendor` role instead of Contributor | Vending needs only RGs, identities, federated credentials, and role assignments — nothing more. |
 | Separate read-only `Landing Zone Vendor Reader` identity for PR previews | An untrusted PR must be able to preview but never change anything. |
-| One Terraform state key per workload | A broken or malicious declaration cannot corrupt another workload's state. |
+| Two distinct state keys per workload (`<name>-vending.tfstate` here, `<name>-infra.tfstate` in the workload repo) | Each Terraform root owns a separate state inventory, so the platform and the workload can never collide or destroy each other's resources, and a broken declaration cannot corrupt another workload's state. |
 | Workload RG is a `resource` in `vending/` | Self-service onboarding (no manual RG create) and clean teardown on offboard. |
 | Convergent re-plan on merge (no carried plan artifact) | Makes apply/destroy safely re-runnable and manually dispatchable; removes a public-artifact exposure. |
 | Seed repo-level `AZURE_CLIENT_ID_<ENV>` via a least-privilege GitHub App | Automates the handoff without giving the seeder repository-administration rights. |
