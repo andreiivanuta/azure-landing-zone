@@ -121,7 +121,7 @@ jobs:
           -backend-config="resource_group_name=rg-alz-management-swc"
           -backend-config="storage_account_name=${{ vars.STATE_STORAGE_ACCOUNT_NAME }}"
           -backend-config="container_name=tfstate"
-          -backend-config="key=${{ matrix.workload }}.tfstate"
+          -backend-config="key=${{ matrix.workload }}-vending.tfstate"
 
       - name: Terraform apply (fresh plan against current state)
         run: |
