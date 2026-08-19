@@ -1,7 +1,7 @@
 # Operating & Onboarding Guide
 
 How this platform is operated, and how a workload team gets a landing zone from it.
-For architecture and design rationale see [implementation-plan.md](implementation-plan.md);
+For architecture and design rationale see [architecture.md](architecture.md);
 for the security model see [security-model.md](security-model.md).
 
 ## The model in one picture

@@ -22,9 +22,11 @@ GitHub Actions under the identities minted here.
 | Management RG | `rg-alz-management-swc` | Persistent home for the platform's own resources (state SA and the platform identities). |
 | Identity RG | `rg-alz-identity-swc` | Persistent home for the workload identities the vending pipeline mints (CAF identity archetype). |
 | Admin UAMI | `id-alz-admin-swc` (in management RG) | Break-glass platform identity for the `admin` GitHub environment. |
-| Vending UAMI | `id-alz-vending-swc` (in management RG) | Bounded automation identity for the `vending` GitHub environment. |
-| Federated credential per identity | `github-admin`, `github-vending` | Trusts only the exact GitHub OIDC subject for its environment. |
-| Custom role `Landing Zone Vendor (alz)` | Subscription | The minimum set of actions the vending identity needs (see below). |
+| Vending UAMI | `id-alz-vending-swc` (in management RG) | Bounded **write** identity for the `vending` GitHub environment (apply / destroy). |
+| Vending-PR UAMI | `id-alz-vending-pr-swc` (in management RG) | **Read-only** identity for pull-request plan previews (runs with no environment). |
+| Federated credentials | `github-admin`, `github-vending`, `github-vending-pr` (`:pull_request`), `github-vending-main-plan` (`:ref:refs/heads/main`) | Each trusts only its exact GitHub OIDC subject. The read-only identity carries two so it can preview both on a PR and on merge. |
+| Custom role `Landing Zone Vendor (alz)` | Subscription | The minimum **write** actions the vending identity needs (see below). |
+| Custom role `Landing Zone Vendor Reader (alz)` | Subscription | The read-only counterpart, assigned to the PR-plan identity. |
 | Terraform state SA | `st alz state <uniqueString>` (in management RG) | Shared, Entra-only, keyless backend for every Terraform root's state. |
 
 The SA name is derived from `uniqueString(subscription().id)` so the deployment stays
@@ -38,6 +40,12 @@ idempotent without hard-coding any subscription-specific value.
 | Admin | State SA | Storage Blob Data Contributor | Read/write Terraform state (shared keys are disabled). |
 | Vending | Subscription | `Landing Zone Vendor (alz)` (custom) | Create workload RGs, UAMIs + federated credentials, and role assignments — **no** Contributor, **no** Owner, no data-plane rights beyond state. |
 | Vending | State SA | Storage Blob Data Contributor | Read/write its own state key (`<workload>.tfstate`). |
+| Vending-PR | Subscription | `Landing Zone Vendor Reader (alz)` (custom) | Read-only preview only — no create / update / delete anywhere. |
+| Vending-PR | State SA | Storage Blob Data Reader | Read state during `plan`; never writes. |
+
+The vending Terraform root later also grants the vending **and** PR identities `Reader`
+on each workload RG (not by this trust anchor), so the destroy pipeline can enumerate an
+RG's live contents for its blast-radius check.
 
 The custom role explicitly lists only:
 `Microsoft.Resources/subscriptions/resourceGroups/{read,write,delete}`,
@@ -46,17 +54,22 @@ The custom role explicitly lists only:
 `Microsoft.Authorization/roleDefinitions/read`, and
 `Microsoft.Storage/storageAccounts/read`.
 
-Neither identity holds a subscription-wide Contributor or Owner assignment. There is
-no client secret anywhere; every login is a short-lived OIDC token exchange.
+The read-only `Landing Zone Vendor Reader (alz)` role lists only the `*/read` equivalents,
+so the PR-plan identity can preview but never change anything.
+
+No identity holds a subscription-wide Contributor or Owner assignment. There is no client
+secret anywhere; every login is a short-lived OIDC token exchange.
 
 ## Deployment-time inputs
 
-The two required parameters are the exact immutable GitHub OIDC subjects for the
-`admin` and `vending` environments:
+The required parameters are the exact immutable GitHub OIDC subjects for the platform
+identities — the two environment subjects plus the two the read-only PR identity trusts:
 
 ```text
-adminOidcSubject    e.g. repo:<owner>@<ownerId>/azure-landing-zone@<repoId>:environment:admin
-vendingOidcSubject  e.g. repo:<owner>@<ownerId>/azure-landing-zone@<repoId>:environment:vending
+adminOidcSubject        …/azure-landing-zone@<repoId>:environment:admin
+vendingOidcSubject      …/azure-landing-zone@<repoId>:environment:vending
+pullRequestOidcSubject  …/azure-landing-zone@<repoId>:pull_request
+mainRefOidcSubject      …/azure-landing-zone@<repoId>:ref:refs/heads/main
 ```
 
 They are never committed. `deploy.ps1` derives them from `gh api` at deployment time,
@@ -76,13 +89,18 @@ pwsh ./bootstrap-trust/deploy.ps1
 
 That script will:
 
-1. Derive both OIDC subjects via `gh api`.
+1. Derive all four OIDC subjects via `gh api` (admin, vending, `:pull_request`, `:ref:refs/heads/main`).
 2. Run `az deployment sub create` against this template.
 3. Read the outputs (client IDs, SA name) without printing them.
-4. Configure the `admin` (branches: `dev`) and `vending` (branches: `dev`, `main`)
-   GitHub environments with `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` (variables) and
-   `AZURE_SUBSCRIPTION_ID` (secret).
-5. Set the repo-level `STATE_STORAGE_ACCOUNT_NAME` variable so CI knows the backend.
+4. Configure the `admin` and `vending` GitHub environments — **both restricted to `main`** —
+   with `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` (variables) and `AZURE_SUBSCRIPTION_ID` (secret).
+5. Set the repo-level values the environment-less PR-plan job needs:
+   `STATE_STORAGE_ACCOUNT_NAME`, `VENDING_PR_CLIENT_ID` (the read-only client ID),
+   `AZURE_TENANT_ID` (variable), and `AZURE_SUBSCRIPTION_ID` (secret).
+
+> Seeding a **workload** repository with its vended credentials is a separate, automated
+> step performed later by `vending-apply` via the seeder GitHub App — not by this script.
+> See [../docs/architecture.md](../docs/architecture.md).
 
 ## Safe next checks
 

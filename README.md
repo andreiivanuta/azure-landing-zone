@@ -68,7 +68,8 @@ vending/                 Terraform — consumes the module to vend each declared
   workloads/             one <name>.tfvars per workload (the registry)
 .github/workflows/       vending PR-plan / apply / destroy (GitHub Actions)
 config/project.json      shared naming (platform prefix, region)
-docs/                    onboarding guide, implementation plan, security model
+docs/                    architecture, onboarding guide, security model
+docs/diagrams/           editable draw.io sources for the architecture diagrams
 ```
 
 ## Operating model
@@ -101,7 +102,13 @@ The vending module enforces, at plan time:
 No secrets, Terraform state, or real identifiers are committed. Storage is Entra-ID-only
 (shared keys disabled). See [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md).
 
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) — components, trust and identity model, the vending lifecycle, and design decisions (with diagrams).
+- [docs/onboarding.md](docs/onboarding.md) — how to operate the platform and onboard/offboard a workload.
+- [docs/security-model.md](docs/security-model.md) — trust boundaries, guardrails, and the public-data policy.
+
 ## Status
 
-Learning sandbox. See [docs/implementation-plan.md](docs/implementation-plan.md) for the current
-checkpoint and plan.
+Learning sandbox, actively built. See [docs/architecture.md](docs/architecture.md) for the
+current design and [CHANGELOG.md](CHANGELOG.md) for what changed and why.

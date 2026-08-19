@@ -1,0 +1,57 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram name="Vending lifecycle" id="alz-vending-lifecycle">
+    <mxGraphModel dx="1024" dy="768" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="800" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="pr" value="PR: add / edit / delete vending/workloads/&lt;name&gt;.tfvars" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="320" y="40" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="plan" value="vending-pr-plan — read-only preview comment (the gate)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="300" y="120" width="340" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="review" value="Human review + merge?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="390" y="210" width="160" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="apply" value="vending-apply — re-plan + apply" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="110" y="350" width="240" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="ids" value="Create identities + federation + RBAC" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="110" y="420" width="240" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="seed" value="Mint repo-scoped GitHub App token → seed workload repo vars/secret" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="110" y="490" width="240" height="50" as="geometry" />
+        </mxCell>
+        <mxCell id="ready" value="Workload repo can OIDC-login and deploy itself" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="110" y="570" width="240" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="destroy" value="vending-destroy" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="590" y="350" width="180" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="gate" value="Blast-radius gate: RG empty?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="570" y="420" width="220" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="stop" value="Fail-safe: nothing destroyed" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
+          <mxGeometry x="840" y="450" width="200" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="teardown" value="Destroy identities + RG, then un-seed workload repo" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+          <mxGeometry x="580" y="560" width="240" height="50" as="geometry" />
+        </mxCell>
+
+        <mxCell id="l1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="pr" target="plan"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="plan" target="review"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l3" value="merge add / edit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="review" target="apply"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l4" value="merge delete" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="review" target="destroy"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="apply" target="ids"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="ids" target="seed"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="seed" target="ready"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="destroy" target="gate"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l9" value="no — refuse unless force" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="gate" target="stop"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="l10" value="yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="gate" target="teardown"><mxGeometry relative="1" as="geometry" /></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
