@@ -10,9 +10,9 @@ The subscription-scope Bicep trust anchor (`bootstrap-trust/main.bicep`) owns:
 
 - The management RG (Resource Group) `rg-alz-management-swc` and the identity RG `rg-alz-identity-swc`.
 - The admin UAMI (User-Assigned Managed Identity) `id-alz-admin-swc` and its GitHub OIDC federated credential (`github-admin`).
-- The vending UAMI `id-alz-vending-swc` and its GitHub OIDC federated credential (`github-vending`).
-- The custom role `Landing Zone Vendor (alz)` at subscription scope, assigned to the vending identity.
-- The shared Terraform state SA (Storage Account) inside the management RG, with Storage Blob Data Contributor granted to admin and vending.
+- The vending **write** UAMI `id-alz-vending-swc` and its credential (`github-vending`), plus the read-only PR-plan UAMI `id-alz-vending-pr-swc` with two credentials (`github-vending-pr` for `:pull_request` and `github-vending-main-plan` for `:ref:refs/heads/main`).
+- The custom roles `Landing Zone Vendor (alz)` (write, assigned to the vending identity) and `Landing Zone Vendor Reader (alz)` (read-only, assigned to the PR-plan identity), both at subscription scope.
+- The shared Terraform state SA (Storage Account) inside the management RG, with Storage Blob Data Contributor granted to admin and vending, and Storage Blob Data Reader to the PR-plan identity.
 - Admin's Contributor + UAA (User Access Administrator) role assignments, scoped only to the management RG.
 
 The vending Terraform root (`vending/`) then owns, per workload:
@@ -38,12 +38,13 @@ The vended plan, deploy, and cleanup identities are granted access scoped only t
 
 ## GitHub trust model
 
-- Pull request workflows perform offline validation and scanning only. They receive no Azure OIDC token, environment secret, or repository write permission.
-- Apply and destroy run only through manual dispatch from protected repository content.
-- Apply and destroy use separate protected GitHub environments and exact OIDC subject claims.
-- Scheduled cleanup uses its own OIDC subject and identity. It cannot access bootstrap resources and destroys resources only after validating expiration metadata.
+- Pull-request previews run **read-only**: `vending-pr-plan` authenticates as the PR-plan identity (`id-alz-vending-pr-swc`), whose roles are read-only, and posts a `plan` preview comment (the review gate). It can read Azure and state but cannot create, update, or delete anything, and holds no write environment.
+- Apply and destroy run on **merge to `main`** — the reviewed PR is the gate — under the `vending` environment and the write identity, with exact OIDC subject claims. They are also `workflow_dispatch`-able for re-run / recovery, and they **re-plan against current state** rather than replaying a saved plan, so no plan artifact is produced or exposed.
+- Destroy has a **blast-radius gate**: it refuses to delete a workload RG that still contains resources unless explicitly forced, so a file-delete PR cannot recursively destroy live infrastructure.
+- The vended `cleanup` identity exists for a workload's own scheduled time-to-live cleanup, executed from the workload repository — this platform repo runs no scheduled jobs.
+- Workload repositories are seeded with their vended client IDs by a least-privilege GitHub App (`alz-vending-seeder`) that mints a repository-scoped token; it holds Variables/Secrets permission only, never repository administration. Client IDs are non-secret identifiers — the OIDC `:environment:<env>` subject is the real gate.
 - GitHub-hosted runners are used. Self-hosted runners are not permitted for this public repository.
-- Every workflow declares explicit minimum `permissions` and pins external actions to full commit SHAs.
+- Every workflow declares explicit minimum `permissions`. Pinning external actions to full commit SHAs is a tracked hardening item (actions are currently pinned to release tags).
 
 ## Remote state requirements
 

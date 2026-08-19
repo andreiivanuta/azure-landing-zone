@@ -9,7 +9,15 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 ## [Unreleased]
 
 ### Added
-- **Reviewed-plan fidelity (carry the plan)**: `vending-pr-plan.yml` now uploads each saved `tf.plan` as an
+
+- **Documentation consolidation** — added [docs/architecture.md](docs/architecture.md) as the
+  single authoritative design doc: a component catalog (trust anchor, vending module, vending
+  root, workflows, seeder App), the two-repository trust and identity model, the OIDC subject
+  model (including the read-only PR-plan identity), the shared state backend, the convergent
+  vending lifecycle (PR preview → merge re-plan apply + GitHub App seeding; offboard → blast-radius
+  gate → destroy + un-seed), and a distilled design-decision log. Diagrams are provided both as
+  inline Mermaid and as editable draw.io sources under [docs/diagrams/](docs/diagrams/)
+  (`architecture.drawio`, `vending-lifecycle.drawio`).
   artifact (keyed by workload + PR head SHA). On merge, `vending-apply.yml` / `vending-destroy.yml` correlate
   the merge commit to its PR, download that exact artifact, and `terraform apply tf.plan` — so what deploys is
   byte-for-byte the plan that was reviewed. If state moved since the plan was saved, Terraform refuses (stale
@@ -74,6 +82,14 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 
 ### Changed
 
+- **Refreshed the docs to the current convergent design.** `bootstrap-trust/README.md` now documents
+  the read-only PR-plan identity (`id-alz-vending-pr-swc`), the `Landing Zone Vendor Reader (alz)`
+  custom role, its two federated credentials (`:pull_request` + `:ref:refs/heads/main`), and the
+  `main`-only environment branch policies (the stale `dev` references are gone). `docs/security-model.md`
+  now reflects that PR previews run read-only under an OIDC identity, that apply/destroy run on merge
+  (with `workflow_dispatch` recovery) and re-plan instead of replaying a saved plan, the destroy
+  blast-radius gate, and least-privilege workload-repo seeding via the GitHub App. `README.md` gained a
+  Documentation section pointing at the new architecture doc.
 - Scoped the repository to **platform authority only** (the landing-zone foundation): removed
   workload/AKS deployment content from `docs/implementation-plan.md` and `docs/security-model.md`.
   The AKS cluster deploys from the workload repository, using the identities and state this platform vends.
@@ -142,6 +158,9 @@ under `Unreleased` and tracked by date instead of semantic-version tags.
 
 ### Removed
 
+- `docs/implementation-plan.md` — the obsolete build journal (phases, checkpoints, resume protocol).
+  Its durable design content was distilled into [docs/architecture.md](docs/architecture.md) and
+  refreshed to the current design; the build history remains in git.
 - `.github/workflows/vending.yml` — the manual `workflow_dispatch` plan/apply/destroy pipeline, superseded
   by the automated PR-preview + gated apply/destroy lifecycle above. (Retained in git history for break-glass.)
 - `.github/workflows/oidc-smoke-test.yml` — the one-off OIDC (OpenID Connect) + state-backend diagnostic;
