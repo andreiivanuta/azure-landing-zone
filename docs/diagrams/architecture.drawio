@@ -1,94 +1,134 @@
 <mxfile host="app.diagrams.net" type="device">
   <diagram name="Trust and components" id="alz-architecture">
-    <mxGraphModel dx="1024" dy="768" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1100" pageHeight="850" math="0" shadow="0">
+    <mxGraphModel dx="1400" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="1020" math="0" shadow="0">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
 
-        <mxCell id="platBoundary" value="Platform boundary — azure-landing-zone" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;verticalAlign=top;fontStyle=1;strokeColor=#6c8ebf;" vertex="1" parent="1">
-          <mxGeometry x="20" y="180" width="580" height="330" as="geometry" />
+        <!-- Boundaries -->
+        <mxCell id="plat" value="Platform boundary — azure-landing-zone (created by the Bicep trust anchor)" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;verticalAlign=top;fontStyle=1;strokeColor=#6c8ebf;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="230" width="760" height="320" as="geometry" />
         </mxCell>
-        <mxCell id="ghaBoundary" value="GitHub Actions — this repo" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;verticalAlign=top;fontStyle=1;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="20" y="540" width="580" height="120" as="geometry" />
+        <mxCell id="gha" value="GitHub Actions — this repo" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;verticalAlign=top;fontStyle=1;strokeColor=#82b366;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="600" width="760" height="120" as="geometry" />
         </mxCell>
-        <mxCell id="wlBoundary" value="Workload repo" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;verticalAlign=top;fontStyle=1;strokeColor=#b85450;" vertex="1" parent="1">
-          <mxGeometry x="640" y="540" width="300" height="220" as="geometry" />
+        <mxCell id="wl" value="Workload repository" style="rounded=0;whiteSpace=wrap;html=1;dashed=1;fillColor=none;verticalAlign=top;fontStyle=1;strokeColor=#b85450;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="840" y="860" width="340" height="100" as="geometry" />
         </mxCell>
 
+        <!-- Top: user + bicep -->
         <mxCell id="user" value="Trusted user — az login" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
-          <mxGeometry x="40" y="40" width="240" height="40" as="geometry" />
+          <mxGeometry x="80" y="40" width="240" height="40" as="geometry" />
         </mxCell>
         <mxCell id="bicep" value="Bicep trust anchor — subscription scope" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
-          <mxGeometry x="40" y="110" width="300" height="40" as="geometry" />
+          <mxGeometry x="80" y="120" width="300" height="40" as="geometry" />
         </mxCell>
 
-        <mxCell id="mrg" value="Management RG" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="40" y="220" width="150" height="40" as="geometry" />
+        <!-- Platform resources row -->
+        <mxCell id="mrg" value="Management RG" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="80" y="280" width="160" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="irg" value="Identity RG" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="210" y="220" width="150" height="40" as="geometry" />
+        <mxCell id="irg" value="Identity RG" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="300" y="280" width="160" height="40" as="geometry" />
         </mxCell>
         <mxCell id="st" value="Terraform state SA — Entra-only" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
-          <mxGeometry x="390" y="210" width="180" height="70" as="geometry" />
+          <mxGeometry x="520" y="270" width="180" height="70" as="geometry" />
         </mxCell>
+
+        <!-- Platform identities row -->
         <mxCell id="adm" value="Admin UAMI — break-glass" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="40" y="300" width="170" height="40" as="geometry" />
+          <mxGeometry x="80" y="450" width="160" height="44" as="geometry" />
         </mxCell>
         <mxCell id="ven" value="Vending UAMI — write" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="230" y="300" width="160" height="40" as="geometry" />
+          <mxGeometry x="300" y="450" width="160" height="44" as="geometry" />
         </mxCell>
         <mxCell id="pri" value="Vending-PR UAMI — read-only" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="410" y="300" width="160" height="40" as="geometry" />
+          <mxGeometry x="520" y="450" width="180" height="44" as="geometry" />
         </mxCell>
 
+        <!-- Subscription (custom role scope) -->
         <mxCell id="sub" value="Subscription" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
-          <mxGeometry x="660" y="220" width="140" height="40" as="geometry" />
+          <mxGeometry x="880" y="450" width="180" height="54" as="geometry" />
         </mxCell>
-        <mxCell id="tf" value="vending Terraform root" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="660" y="320" width="200" height="40" as="geometry" />
-        </mxCell>
-        <mxCell id="wrg" value="Workload RG" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
-          <mxGeometry x="660" y="400" width="200" height="40" as="geometry" />
+        <mxCell id="subnote" value="Custom roles Landing Zone Vendor / Vendor Reader are defined at subscription scope by the Bicep trust anchor" style="text;html=1;align=left;verticalAlign=top;whiteSpace=wrap;fontSize=9;fontColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="880" y="510" width="230" height="40" as="geometry" />
         </mxCell>
 
+        <!-- Workflows (aligned under their identities) -->
+        <mxCell id="w3" value="vending-destroy — on merge / dispatch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="80" y="625" width="160" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="w2" value="vending-apply — on merge / dispatch" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="300" y="625" width="160" height="55" as="geometry" />
+        </mxCell>
         <mxCell id="w1" value="vending-pr-plan — read-only preview" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="40" y="580" width="180" height="50" as="geometry" />
-        </mxCell>
-        <mxCell id="w2" value="vending-apply — on merge" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="240" y="580" width="160" height="50" as="geometry" />
-        </mxCell>
-        <mxCell id="w3" value="vending-destroy — on merge" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
-          <mxGeometry x="420" y="580" width="160" height="50" as="geometry" />
+          <mxGeometry x="520" y="625" width="180" height="55" as="geometry" />
         </mxCell>
 
+        <!-- Right side: vending Terraform root -> workload chain -->
+        <mxCell id="tf" value="vending Terraform root" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="880" y="590" width="200" height="44" as="geometry" />
+        </mxCell>
+        <mxCell id="wrg" value="Workload RG" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1">
+          <mxGeometry x="880" y="680" width="200" height="44" as="geometry" />
+        </mxCell>
         <mxCell id="wid" value="Per-workload UAMIs — plan / deploy / cleanup" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
-          <mxGeometry x="660" y="580" width="260" height="50" as="geometry" />
+          <mxGeometry x="880" y="780" width="260" height="50" as="geometry" />
         </mxCell>
         <mxCell id="wrepo" value="Workload repo — deploys itself" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" vertex="1" parent="1">
-          <mxGeometry x="680" y="680" width="220" height="40" as="geometry" />
+          <mxGeometry x="880" y="890" width="260" height="44" as="geometry" />
         </mxCell>
 
-        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="user" target="bicep"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="bicep" target="mrg"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="bicep" target="irg"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="bicep" target="st"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="bicep" target="adm"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e6" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="bicep" target="ven"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="bicep" target="pri"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e8" value="Contributor + UAA" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="adm" target="mrg"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e9" value="Blob Data Contributor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="ven" target="st"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e10" value="Blob Data Reader" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="pri" target="st"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e11" value="Vendor role" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="ven" target="sub"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e12" value="Vendor Reader role" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="pri" target="sub"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e13" value="OIDC :pull_request" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="w1" target="pri"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e14" value="OIDC :environment:vending" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="w2" target="ven"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="w3" target="ven"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e16" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="w2" target="tf"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e17" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="tf" target="wrg"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e18" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;" edge="1" parent="1" source="tf" target="wid"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e19" value="scoped RBAC" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="wid" target="wrg"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e20" value="GitHub App token — seed vars" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;dashed=1;" edge="1" parent="1" source="w2" target="wrepo"><mxGeometry relative="1" as="geometry" /></mxCell>
-        <mxCell id="e21" value="OIDC :environment:apply" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;" edge="1" parent="1" source="wrepo" target="wid"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <!-- Edges -->
+        <mxCell id="E1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="user" target="bicep"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E2" value="deploys — one-time, local" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="bicep" target="plat"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E3" value="Contributor + UAA" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.375;exitY=0;exitDx=0;exitDy=0;entryX=0.375;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="adm" target="mrg"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E4" value="Blob Data Contributor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=1;exitY=0.4;exitDx=0;exitDy=0;entryX=0.111;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="adm" target="st">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="260" y="468" /><mxPoint x="260" y="370" /><mxPoint x="540" y="370" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E5" value="Blob Data Contributor" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.375;exitY=0;exitDx=0;exitDy=0;entryX=0.222;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="ven" target="st">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="360" y="390" /><mxPoint x="560" y="390" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E6" value="Blob Data Reader" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="pri" target="st"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E7" value="Vendor role" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.44;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ven" target="sub">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="420" y="410" /><mxPoint x="960" y="410" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E8" value="Vendor Reader role" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=1;exitY=0.6;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="pri" target="sub">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="790" y="477" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E9" value="OIDC :pull_request" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="w1" target="pri"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E10" value="OIDC :environment:vending" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="w2" target="ven"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E11" value="OIDC :environment:vending" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="w3" target="ven">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="160" y="560" /><mxPoint x="340" y="560" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E12" value="runs Terraform" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="w2" target="tf">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="490" y="652" /><mxPoint x="490" y="760" /><mxPoint x="840" y="760" /><mxPoint x="840" y="612" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="tf" target="wrg"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E14" value="creates workload identities" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="tf" target="wid">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="1160" y="612" /><mxPoint x="1160" y="805" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E15" value="scoped RBAC" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.15;exitY=0;exitDx=0;exitDy=0;entryX=0.2;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="wid" target="wrg"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="E16" value="GitHub App token — seed repo vars" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;dashed=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="w2" target="wrepo">
+          <mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="380" y="820" /><mxPoint x="810" y="820" /><mxPoint x="810" y="912" /></Array></mxGeometry>
+        </mxCell>
+
+        <mxCell id="E17" value="OIDC :environment:apply" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;fontSize=10;exitX=0.46;exitY=0;exitDx=0;exitDy=0;entryX=0.46;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="wrepo" target="wid"><mxGeometry relative="1" as="geometry" /></mxCell>
       </root>
     </mxGraphModel>
   </diagram>
